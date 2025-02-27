@@ -1,0 +1,36 @@
+#!/bin/bash
+
+name="muon_single_gpu"
+
+
+BASE_DIR=/projectnb/aclab/qinziz/nanogpt-mango
+DATE=$(date +"%Y-%m-%d")
+
+OUTPUT_PATH=$BASE_DIR/scc_outputs/$DATE
+
+mkdir -p $OUTPUT_PATH
+
+
+job_output=$(qsub <<EOF
+#!/bin/bash -l
+
+#$ -pe omp 8
+#$ -l gpus=1
+#$ -l gpu_type=L40S     # Specifies the gpu type.
+#$ -l h_rt=8:00:00      # Specifies the hard time limit for the job
+#$ -N "$name".sh
+#$ -o $OUTPUT_PATH/\$JOB_NAME.o\$JOB_ID     # Escape environment variables with \$
+#$ -e $OUTPUT_PATH/\$JOB_NAME.e\$JOB_ID
+
+source activate_env.sh
+torchrun --standalone --nproc_per_node=1 train_single_gpu.py \
+    --gpt.flex_kernel_consumer True --train.sequence_length 32768 --train.batch_size 32
+EOF
+)
+
+# Save job id and associated name to local .txt
+# This is extremely helpful to manage a bunch of experiments.
+job_id=$(echo "$job_output" | awk '{print $3}')
+echo "$(date '+%Y-%m-%d %H:%M:%S') job_id: ${job_id} || ${name}" >> "${OUTPUT_PATH}/job_list.txt"
+
+echo "Submitted job: $name"
