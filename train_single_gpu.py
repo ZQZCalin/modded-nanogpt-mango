@@ -390,8 +390,10 @@ DATA_PATH = "/projectnb/aclab/datasets"
 @dataclass
 class Hyperparameters:
     # data hyperparams
-    input_bin : str = 'data/fineweb10B/fineweb_train_*.bin' # input .bin to train on
-    input_val_bin : str = 'data/fineweb10B/fineweb_val_*.bin' # input .bin to eval validation loss on
+    input_bin : str = os.path.join(DATA_PATH, 'fineweb10B/fineweb_train_*.bin')
+    input_val_bin : str = os.path.join(DATA_PATH, 'fineweb10B/fineweb_val_*.bin')
+    # input_bin : str = 'data/fineweb10B/fineweb_train_*.bin' # input .bin to train on
+    # input_val_bin : str = 'data/fineweb10B/fineweb_val_*.bin' # input .bin to eval validation loss on
     # optimization hyperparams
     batch_size : int = 8 # batch size, in sequences, across all devices
     sequence_length : int = 64*1024 # sequence length, in tokens
