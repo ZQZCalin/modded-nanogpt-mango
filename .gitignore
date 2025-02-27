@@ -2,3 +2,8 @@ fineweb10B/
 pylog124M/
 __pycache__/
 logs/
+
+# modded-nanogpt-mango
+env/
+# scc_setup.sh
+# activate_env.sh
