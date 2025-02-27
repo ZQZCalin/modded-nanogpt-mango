@@ -441,8 +441,9 @@ def distributed_data_generator(filename_pattern: str, batch_size: int, rank : in
 @dataclass
 class Hyperparameters:
     # data
-    train_files = "data/fineweb10B/fineweb_train_*.bin" # input .bin to train on
-    val_files = "data/fineweb10B/fineweb_val_*.bin" # input .bin to eval validation loss on
+    data_dir = "data"
+    train_files = "fineweb10B/fineweb_train_*.bin" # input .bin to train on
+    val_files = "fineweb10B/fineweb_val_*.bin" # input .bin to eval validation loss on
     val_tokens = 10485760 # how many tokens of validation data? it's important to keep this fixed for consistent comparisons
     train_seq_len = 48*1024 # FlexAttention sequence length
     val_seq_len = 4*64*1024 # FlexAttention sequence length for validation
@@ -454,7 +455,9 @@ class Hyperparameters:
     # evaluation and logging
     val_loss_every = 125 # every how many steps to evaluate val loss? 0 for only at the end
     save_checkpoint = False
-args = Hyperparameters()
+args = Hyperparameters(
+    data_dir = "/projectnb/aclab/datasets"
+)
 
 # torchrun sets these env variables
 rank = int(os.environ["RANK"])
@@ -571,7 +574,8 @@ del initial_state
 #        Training and validation       #
 ########################################
 
-train_loader = distributed_data_generator(args.train_files, world_size * args.train_seq_len, rank, world_size)
+train_loader = distributed_data_generator(
+    os.path.join(args.data_dir, args.train_files), world_size * args.train_seq_len, rank, world_size)
 training_time_ms = 0
 # start the clock
 torch.cuda.synchronize()
