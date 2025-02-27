@@ -440,8 +440,9 @@ def distributed_data_generator(filename_pattern: str, batch_size: int, rank : in
 
 @dataclass
 class Hyperparameters:
+    run_name: str = "run"
     # data
-    data_dir = "data"
+    data_dir: str = "data"
     train_files = "fineweb10B/fineweb_train_*.bin" # input .bin to train on
     val_files = "fineweb10B/fineweb_val_*.bin" # input .bin to eval validation loss on
     val_tokens = 10485760 # how many tokens of validation data? it's important to keep this fixed for consistent comparisons
@@ -456,13 +457,14 @@ class Hyperparameters:
     val_loss_every = 125 # every how many steps to evaluate val loss? 0 for only at the end
     save_checkpoint = False
 args = Hyperparameters(
-    data_dir = "/projectnb/aclab/datasets"
+    run_name="muon_baseline",
+    data_dir="/projectnb/aclab/datasets"
 )
 
 # torchrun sets these env variables
 rank = int(os.environ["RANK"])
 world_size = int(os.environ["WORLD_SIZE"])
-assert world_size == 8 # this code is designed for 8xH100
+# assert world_size == 8 # this code is designed for 8xH100
 assert torch.cuda.is_available()
 device = torch.device("cuda", int(os.environ["LOCAL_RANK"]))
 torch.cuda.set_device(device)
@@ -474,8 +476,9 @@ master_process = (rank == 0) # this process will do logging, checkpointing etc.
 logfile = None
 if master_process:
     run_id = uuid.uuid4()
-    os.makedirs("logs", exist_ok=True)
-    logfile = f"logs/{run_id}.txt"
+    log_dir = f"logs/{args.run_name}"
+    os.makedirs(log_dir, exist_ok=True)
+    logfile = f"{log_dir}/{run_id}.txt"
     print(logfile)
 def print0(s, console=False):
     if master_process:
@@ -574,6 +577,11 @@ del initial_state
 #        Training and validation       #
 ########################################
 
+# Simulate parallel training on a singl GPU
+simulate_world_size = 8
+assert simulate_world_size % world_size == 0
+meta_batch_size = simulate_world_size // world_size
+
 train_loader = distributed_data_generator(
     os.path.join(args.data_dir, args.train_files), world_size * args.train_seq_len, rank, world_size)
 training_time_ms = 0
@@ -594,7 +602,8 @@ for step in range(train_steps + 1):
         val_batch_size = world_size * args.val_seq_len
         assert args.val_tokens % val_batch_size == 0
         val_steps = args.val_tokens // val_batch_size
-        val_loader = distributed_data_generator(args.val_files, val_batch_size, rank, world_size)
+        val_loader = distributed_data_generator(
+            os.path.join(args.data_dir, args.val_files), val_batch_size, rank, world_size)
         val_loss = 0
         with torch.no_grad():
             for _ in range(val_steps):
@@ -618,10 +627,15 @@ for step in range(train_steps + 1):
         break
 
     # --------------- TRAINING SECTION -----------------
-    inputs, targets = next(train_loader)
-    model(inputs, targets, get_window_size_blocks(step)).backward()
-    for param in model.parameters():
-        dist.all_reduce(param.grad, op=dist.ReduceOp.AVG)
+    # Simulate parallel training:
+    loss = 0
+    for _ in range(meta_batch_size):
+        inputs, targets = next(train_loader)
+        local_loss = model(inputs, targets, get_window_size_blocks(step)) / meta_batch_size
+        local_loss.backward()
+        loss += local_loss.detach()
+        for param in model.parameters():
+            dist.all_reduce(param.grad, op=dist.ReduceOp.AVG)
     # set optimization hyperparameters
     for opt in optimizers:
         for group in opt.param_groups:
@@ -636,7 +650,7 @@ for step in range(train_steps + 1):
     model.zero_grad(set_to_none=True)
     # logging
     approx_training_time_ms = training_time_ms + 1000 * (time.perf_counter() - t0)
-    print0(f"step:{step+1}/{train_steps} train_time:{approx_training_time_ms:.0f}ms step_avg:{approx_training_time_ms/(step + 1):.2f}ms", console=True)
+    print0(f"step:{step+1}/{train_steps} train_loss:{loss} train_time:{approx_training_time_ms:.0f}ms step_avg:{approx_training_time_ms/(step + 1):.2f}ms", console=True)
 
 print0(f"peak memory allocated: {torch.cuda.max_memory_allocated() // 1024 // 1024} MiB "
        f"reserved: {torch.cuda.max_memory_reserved() // 1024 // 1024} MiB", console=True)
