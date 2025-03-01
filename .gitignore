@@ -6,5 +6,7 @@ logs/
 # modded-nanogpt-mango
 env/
 scc_outputs/
+wandb/
+test.*
 # scc_setup.sh
 # activate_env.sh
