@@ -2,3 +2,5 @@ numpy
 tqdm
 torch
 huggingface-hub
+# adds wandb for logging
+wandb
