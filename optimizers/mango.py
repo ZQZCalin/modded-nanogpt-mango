@@ -1,60 +1,10 @@
+# -----------------------------------------------------------------------------
+# Mango optimizer
+
 import torch
-from torch.optim.optimizer import Optimizer, required
+from torch import Tensor
+import torch.distributed as dist
 from functools import partial
-
-def zeropower_via_svd(G, steps=None):
-    U, S, V = G.svd()
-    return U @ V.T
-
-@torch.compile
-def zeropower_via_newtonschulz5(G, steps=10, eps=1e-7, scale_dim=True):
-    """
-    Newton-Schulz iteration to compute the zeroth power / orthogonalization of G. We opt to use a
-    quintic iteration whose coefficients are selected to maximize the slope at zero. For the purpose
-    of minimizing steps, it turns out to be empirically effective to keep increasing the slope at
-    zero even beyond the point where the iteration no longer converges all the way to one everywhere
-    on the interval. This iteration therefore does not produce UV^T but rather something like US'V^T
-    where S' is diagonal with S_{ii}' ~ Uniform(0.5, 1.5), which turns out not to hurt model
-    performance at all relative to UV^T, where USV^T = G is the SVD.
-    """
-    assert len(G.shape) == 2
-    a, b, c = (3.4445, -4.7750,  2.0315)
-    X = G.bfloat16()
-    X /= (X.norm() + eps) # ensure top singular value <= 1
-    if G.size(0) > G.size(1):
-        X = X.T
-    for _ in range(steps):
-        A = X @ X.T
-        B = b * A + c * A @ A # adapted from suggestion by @jxbz, @leloykun, and @YouJiacheng
-        X = a * X + B @ X
-    if G.size(0) > G.size(1):
-        X = X.T
-    if scale_dim:
-        X *= max(1, X.size(0)/X.size(1))**0.5
-    return X
-
-@torch.compile
-def normalize_via_newtonschulzfunc(G):
-    """Under construction..."""
-
-def normalize_via_colmax(G, transpose=False):
-    assert G.dim() == 2
-    if transpose:
-        axis = 1    # broadcast along rows
-    else:
-        axis = 0    # broadcast along cols
-    max_norm = G.norm(dim=axis).max()
-    return G / max_norm
-
-def normalize_via_sign(G):
-    return G.sign_()
-
-normalize_backends = dict(
-    svd=zeropower_via_svd,
-    newtonschulz5=zeropower_via_newtonschulz5,
-    colmax=normalize_via_colmax,
-    sign=normalize_via_sign,
-)
 
 def tensor_pow(t, power):
     """A custom wrapper for `torch.pow`."""
@@ -72,11 +22,86 @@ def rms(t):
         return torch.tensor(0.0, device=t.device, dtype=t.dtype)
     return torch.sqrt(torch.mean(t**2))
 
-class Mango(Optimizer):
-    def __init__(self, params, lr=required, beta1=0.95, beta2=0.95, nesterov=True,
-                 normalize_fn=None, scale_rms=True, eps=1e-8, laprop=False,
+########################################
+#         Normalization Methods        #
+########################################
+
+def zeropower_via_svd(G):
+    """Simple SVD implementation."""
+    U, S, V = G.svd()
+    return U @ V.T
+
+@torch.compile
+def zeropower_via_newtonschulz5(G: Tensor, steps: int, scale_dim: bool = True) -> Tensor:
+    """
+    Newton-Schulz iteration to compute the zeroth power / orthogonalization of G. We opt to use a
+    quintic iteration whose coefficients are selected to maximize the slope at zero. For the purpose
+    of minimizing steps, it turns out to be empirically effective to keep increasing the slope at
+    zero even beyond the point where the iteration no longer converges all the way to one everywhere
+    on the interval. This iteration therefore does not produce UV^T but rather something like US'V^T
+    where S' is diagonal with S_{ii}' ~ Uniform(0.5, 1.5), which turns out not to hurt model
+    performance at all relative to UV^T, where USV^T = G is the SVD.
+    """
+    assert G.ndim >= 2 # batched Muon implementation by @scottjmaddox, and put into practice in the record by @YouJiacheng
+    a, b, c = (3.4445, -4.7750,  2.0315)
+    X = G.bfloat16()
+    if G.size(-2) > G.size(-1):
+        X = X.mT
+
+    # Ensure spectral norm is at most 1
+    X = X / (X.norm(dim=(-2, -1), keepdim=True) + 1e-7)
+    # Perform the NS iterations
+    for _ in range(steps):
+        A = X @ X.mT
+        B = b * A + c * A @ A # quintic computation strategy adapted from suggestion by @jxbz, @leloykun, and @YouJiacheng
+        X = a * X + B @ X
+    
+    if G.size(-2) > G.size(-1):
+        X = X.mT
+    
+    # We move dimension scale here
+    if scale_dim:
+        X = X * max(1, G.size(-2)/G.size(-1))**0.5
+    return X
+
+@torch.compile
+def normalize_via_polynomial(G: Tensor, ):
+    """Under construction..."""
+    raise NotImplementedError
+
+def normalize_via_colmax(G, transpose=False):
+    """Normalize by column-max l2 norm."""
+    assert G.dim() == 2
+    if transpose:
+        axis = 1    # broadcast along rows
+    else:
+        axis = 0    # broadcast along cols
+    max_norm = G.norm(dim=axis).max()
+    return G / max_norm
+
+def normalize_via_sign(G):
+    """Normalize by sign function."""
+    return G.sign_()
+
+normalize_backends = dict(
+    svd=zeropower_via_svd,
+    newtonschulz5=zeropower_via_newtonschulz5,
+    polynomial=normalize_via_polynomial,
+    colmax=normalize_via_colmax,
+    sign=normalize_via_sign,
+)
+
+########################################
+#         Main Mango Optimizer         #
+########################################
+
+class Mango(torch.optim.Optimizer):
+    def __init__(self, params, lr=0.02, beta1=0.95, beta2=0.95, nesterov=True,
+                 backend="newtonschulz5", scale_rms=True, eps=1e-8, laprop=False,
                  precond_power=0.5, postcond_power=0.0, **backend_args):
         """
+        Mango optimizer.
+
         Args:
             params: Iterable of parameters to optimize.
             lr: Learning rate.
@@ -89,9 +114,15 @@ class Mango(Optimizer):
             laprop: If True, use LaProp-style preconditioning.
             precond_power: Exponent for preconditioning (e.g. 0.5 for square-root).
             postcond_power: Exponent for post-conditioning.
+
+        Note that Mango reduces to Muon with 
+        __init__(self, params, lr=0.02, beta1=0.95, beta2=0.0, nesterov=True,
+                 backend="newtonschulz5", steps=5, scale_dim=True,
+                 scale_rms=False, eps=1e-8, laprop=False,
+                 precond_power=0.0, postcond_power=0.0)
         """
         defaults = dict(lr=lr, beta1=beta1, beta2=beta2, nesterov=nesterov,
-                        normalize_fn=normalize_fn, scale_rms=scale_rms, eps=eps,
+                        backend=backend, scale_rms=scale_rms, eps=eps,
                         laprop=laprop, precond_power=precond_power, postcond_power=postcond_power,
                         backend_args=backend_args)
         super(Mango, self).__init__(params, defaults)
@@ -114,9 +145,11 @@ class Mango(Optimizer):
             laprop = group['laprop']
             precond_power = group['precond_power']
             postcond_power = group['postcond_power']
-            if group['normalize_fn']:
-                normalize_fn = partial(normalize_backends[group['normalize_fn']],
-                                    **group['backend_args'])
+            backend = group['backend']
+            if backend:
+                assert backend in normalize_backends
+                normalize_fn = partial(normalize_backends[backend], 
+                                       **group['backend_args'])
             else:
                 normalize_fn = None
             
@@ -156,7 +189,7 @@ class Mango(Optimizer):
                 if nesterov:
                     update = beta1 * momentum + update
                 else:
-                    update = momentum
+                    update = momentum.clone()
                 
                 # 4. If not using LaProp, apply Adam-style preconditioning.
                 if beta2 and precond_power and (not laprop):
