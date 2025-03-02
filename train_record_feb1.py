@@ -20,6 +20,43 @@ import torch.distributed as dist
 from torch.nn.attention.flex_attention import BlockMask, flex_attention
 #torch._inductor.config.coordinate_descent_tuning = True # turn this on for a slightly faster run (but much slower compile time)
 
+# --- New libraries ---
+import argparse
+import wandb
+from dataclasses import asdict
+
+# -----------------------------------------------------------------------------
+# Additional argparser to interface with cmd and parallel submit
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Additional cmd args.")
+    # basics
+    parser.add_argument("--random_seed", type=int, default=42, help="Fix a random seed")
+    parser.add_argument("--optimizer", type=str, default="muon", help="Optimizer name")
+    # logging
+    parser.add_argument("--log_folder", type=str, default="", help="Log subfolder name")
+    parser.add_argument("--run_name", type=str, default="", help="Name your run")
+    parser.add_argument("--wandb_project", type=str, default="nanogpt_speedrun", help="Log to wandb project name")
+    # optimizer-specific
+    # parser.add_argument("--mango_")
+    return parser.parse_args()
+
+cmd_args = parse_args()
+
+# -----------------------------------------------------------------------------
+# Reproducibility: Set the random seed (adjust base_seed as desired)
+import random
+import numpy as np
+
+base_seed = cmd_args.random_seed
+rank = int(os.environ["RANK"])
+seed = base_seed + rank
+
+random.seed(seed)
+np.random.seed(seed)
+torch.manual_seed(seed)
+torch.cuda.manual_seed_all(seed)
+
 # -----------------------------------------------------------------------------
 # Custom operators : FP8 matmul by @YouJiacheng
 
@@ -454,7 +491,6 @@ def distributed_data_generator(filename_pattern: str, batch_size: int, rank : in
 
 @dataclass
 class Hyperparameters:
-    run_name: str = "run"
     # data
     data_dir: str = "data"
     train_files = "fineweb10B/fineweb_train_*.bin" # input .bin to train on
@@ -470,7 +506,6 @@ class Hyperparameters:
     val_seq_len = 4*64*1024 # FlexAttention sequence length for validation
     save_checkpoint = False
 args = Hyperparameters(
-    run_name="muon_screenshot",
     data_dir="/projectnb/aclab/datasets"
 )
 
@@ -488,10 +523,11 @@ master_process = (rank == 0) # this process will do logging, checkpointing etc.
 # begin logging
 logfile = None
 if master_process:
-    run_id = uuid.uuid4()
-    log_dir = f"logs/{args.run_name}"
+    run_id = str(uuid.uuid4())
+    run_name = f"{cmd_args.run_name}_{run_id[:4]}"
+    log_dir = f"logs/{cmd_args.log_folder}"
     os.makedirs(log_dir, exist_ok=True)
-    logfile = f"{log_dir}/{run_id}.txt"
+    logfile = os.path.join(log_dir, f"{run_name}.txt")
     print(logfile)
 def print0(s, console=False):
     if master_process:
@@ -570,6 +606,21 @@ for opt, opt_state in zip(optimizers, initial_state['optimizers']):
 del train_loader, initial_state
 
 ########################################
+#           Logging to WandB           #
+########################################
+
+if master_process:
+    wandb.init(
+        project=cmd_args.wandb_project, 
+        name=run_name,
+        id=run_id,
+        resume="never",
+    )
+    wandb.config.update(
+        {**asdict(args), **vars(cmd_args)}
+    )
+
+########################################
 #        Training and validation       #
 ########################################
 
@@ -613,6 +664,9 @@ for step in range(train_steps + 1):
         del val_loader
         dist.all_reduce(val_loss, op=dist.ReduceOp.AVG)
         print0(f"step:{step}/{train_steps} val_loss:{val_loss:.4f} train_time:{training_time_ms:.0f}ms step_avg:{training_time_ms/max(step, 1):.2f}ms", console=True)
+        # add wandb_logging
+        if master_process:
+            wandb.log({"val_loss": val_loss}, step=step)
         model.train()
         # start the clock again
         torch.cuda.synchronize()
@@ -649,7 +703,10 @@ for step in range(train_steps + 1):
     # logging
     approx_training_time_ms = training_time_ms + 1000 * (time.perf_counter() - t0)
     print0(f"step:{step+1}/{train_steps} train_loss:{train_loss} train_time:{approx_training_time_ms:.0f}ms step_avg:{approx_training_time_ms/(step + 1):.2f}ms", console=True)
-
+    if master_process:
+        # NOTE: this train_loss is the local loss on the master node, not averaged over all nodes.
+        wandb.log({"loss": train_loss}, step=step)
+        
 print0(
     f"peak memory allocated: {torch.cuda.max_memory_allocated() // 1024 // 1024} MiB "
     f"reserved: {torch.cuda.max_memory_reserved() // 1024 // 1024} MiB",
