@@ -25,10 +25,11 @@ from torch.nn.attention.flex_attention import BlockMask, flex_attention
 
 # --- New libraries ---
 import argparse
+import ast
 import wandb
 from dataclasses import asdict
 # move optimizers to a different folder for convenient configurations
-from optimizers import Muon
+from optimizers import Muon, Mango
 
 # -----------------------------------------------------------------------------
 # Additional argparser to interface with cmd and parallel submit
@@ -43,10 +44,27 @@ def parse_args():
     parser.add_argument("--run_name", type=str, default="", help="Name your run")
     parser.add_argument("--wandb_project", type=str, default="nanogpt_speedrun", help="Log to wandb project name")
     # optimizer-specific
-    # parser.add_argument("--mango_")
+    parser.add_argument("--mango_mat_lr", type=float, default=0.05, help="Mango-mat learning rate")
+    parser.add_argument("--mango_mat_beta1", type=float, default=0.95, help="Mango-mat beta1")
+    parser.add_argument("--mango_mat_beta2", type=float, default=0.0, help="Mango-mat beta2")
+    parser.add_argument("--mango_mat_nesterov", type=bool, default=True, help="Mango-mat nesterov momentum")
+    parser.add_argument("--mango_mat_backend", type=str, default="newtonschulz5", help="Mango_mat normalize backend")
+    parser.add_argument("--mango_mat_backend_args", type=str, default="steps=5,scale_dim=True", help="Mango_mat backend extra args")
+    parser.add_argument("--mango_mat_scale_rms", type=bool, default=False, help="Mango_mat normalize update by rms norm")
+    parser.add_argument("--mango_mat_eps", type=float, default=1e-8, help="Mango_mat eps")
+    parser.add_argument("--mango_mat_laprop", type=bool, default=False, help="Mango_mat use laprop pre-conditioning")
+    parser.add_argument("--mango_mat_precond_power", type=float, default=0.0, help="Mango_mat preconditioning power")
+    parser.add_argument("--mango_mat_postcond_power", type=float, default=0.0, help="Mango_mat postconditioning power")
     return parser.parse_args()
 
 cmd_args = parse_args()
+
+def parse_backend_args(args: str) -> dict:
+    res = {}
+    for arg in args.split(","):
+        k, v = arg.strip().split("=")
+        res[k] = ast.literal_eval(v)
+    return res
 
 # -----------------------------------------------------------------------------
 # Reproducibility: Set the random seed (adjust base_seed as desired)
@@ -470,7 +488,26 @@ if cmd_args.optimizer == "muon":
     optimizer2 = Muon(hidden_matrix_params, lr=0.05, momentum=0.95, rank=rank, world_size=world_size)
     optimizers = [optimizer1, optimizer2]
 elif cmd_args.optimizer == "mango":
-    raise NotImplementedError
+    adam_params = [dict(params=head_params, lr=0.22), dict(params=embed_params, lr=0.6), dict(params=scalar_params, lr=0.04)]
+    # optimizer1 = Mango(adam_params, beta1=0.8, beta2=0.95, nesterov=False,
+    #                    backend=None, scale_rms=False, eps=1e-10, laprop=False,
+    #                    precond_power=0.5, postcond_power=0.0)
+    # NOTE: the current implementation of Mango doesn't recover Adam: momentum doesn't have (1-beta), and there's no debiasing
+    # so, for now we first keep Adam as the backup, and only test on muon vs mango.
+    optimizer1 = torch.optim.Adam(adam_params, betas=(0.8, 0.95), eps=1e-10, fused=True)
+    optimizer2 = Mango(hidden_matrix_params, 
+                       lr=cmd_args.mango_mat_lr, 
+                       beta1=cmd_args.mango_mat_beta1, 
+                       beta2=cmd_args.mango_mat_beta2, 
+                       nesterov=cmd_args.mango_mat_nesterov,
+                       backend=cmd_args.mango_mat_backend,
+                       scale_rms=cmd_args.mango_mat_scale_rms, 
+                       eps=cmd_args.mango_mat_eps, 
+                       laprop=cmd_args.mango_mat_laprop,
+                       precond_power=cmd_args.mango_mat_precond_power, 
+                       postcond_power=cmd_args.mango_mat_postcond_power,
+                       **parse_backend_args(cmd_args.mango_mat_backend_args))
+    optimizers = [optimizer1, optimizer2]
 else:
     raise ValueError(f"optimizer='{cmd_args.optimizer}' not implemented.")
 for opt in optimizers:
@@ -612,6 +649,11 @@ for step in range(train_steps + 1):
         for group in optimizer2.param_groups:
             frac = min(step / 300, 1) # momentum warmup for muon
             group["momentum"] = (1 - frac) * 0.85 + frac * 0.95
+    # mango-specific
+    if cmd_args.optimizer == "mango":
+        for group in optimizer2.param_groups:
+            frac = min(step / 300, 1) # momentum warmup for muon
+            group["beta1"] = (1 - frac) * 0.85 + frac * 0.95
     # step the optimizers
     for opt in optimizers:
         opt.step()
