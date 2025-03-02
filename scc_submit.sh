@@ -12,6 +12,20 @@ args=(
     "--random_seed ${seed}"
 )
 
+script="train"
+
+# -> Reproducing 0201 record on single gpu (with specified random seeds)
+# seeds=(42 21 1009 324 5646)
+# seed=${seeds[4]}
+# name="muon0201_seed${seed}"
+
+# args=(
+#     "--log_folder muon0201_record"
+#     "--run_name ${name}"
+#     "--random_seed ${seed}"
+# )
+# script="train_record_feb1"
+
 # -----------------------------------------------------------------------------
 # Redirect SCC outputs.
 BASE_DIR=/projectnb/aclab/qinziz/nanogpt-mango      # change your base path here
@@ -33,7 +47,7 @@ job_output=$(qsub <<EOF
 #$ -e $OUTPUT_PATH/\$JOB_NAME.e\$JOB_ID
 
 source activate_env.sh
-torchrun --standalone --nproc_per_node=1 train.py ${args[@]}
+torchrun --standalone --nproc_per_node=1 ${script}.py ${args[@]}
 EOF
 )
 
