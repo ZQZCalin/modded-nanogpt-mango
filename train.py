@@ -34,6 +34,16 @@ from optimizers import Muon, Mango
 # -----------------------------------------------------------------------------
 # Additional argparser to interface with cmd and parallel submit
 
+def str2bool(v):
+    if isinstance(v, bool):
+        return v
+    if v.lower() in ("true"):
+        return True
+    elif v.lower() in ("false"):
+        return False
+    else:
+        raise argparse.ArgumentTypeError("Boolean value expected.")
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Additional cmd args.")
     # basics
@@ -47,12 +57,12 @@ def parse_args():
     parser.add_argument("--mango_mat_lr", type=float, default=0.05, help="Mango-mat learning rate")
     parser.add_argument("--mango_mat_beta1", type=float, default=0.95, help="Mango-mat beta1")
     parser.add_argument("--mango_mat_beta2", type=float, default=0.0, help="Mango-mat beta2")
-    parser.add_argument("--mango_mat_nesterov", type=bool, default=True, help="Mango-mat nesterov momentum")
+    parser.add_argument("--mango_mat_nesterov", type=str2bool, default=True, help="Mango-mat nesterov momentum")
     parser.add_argument("--mango_mat_backend", type=str, default="newtonschulz5", help="Mango_mat normalize backend")
     parser.add_argument("--mango_mat_backend_args", type=str, default="steps=5,scale_dim=True", help="Mango_mat backend extra args")
-    parser.add_argument("--mango_mat_scale_rms", type=bool, default=False, help="Mango_mat normalize update by rms norm")
+    parser.add_argument("--mango_mat_scale_rms", type=str2bool, default=False, help="Mango_mat normalize update by rms norm")
     parser.add_argument("--mango_mat_eps", type=float, default=1e-8, help="Mango_mat eps")
-    parser.add_argument("--mango_mat_laprop", type=bool, default=False, help="Mango_mat use laprop pre-conditioning")
+    parser.add_argument("--mango_mat_laprop", type=str2bool, default=False, help="Mango_mat use laprop pre-conditioning")
     parser.add_argument("--mango_mat_precond_power", type=float, default=0.0, help="Mango_mat preconditioning power")
     parser.add_argument("--mango_mat_postcond_power", type=float, default=0.0, help="Mango_mat postconditioning power")
     return parser.parse_args()
@@ -449,6 +459,9 @@ def print0(s, console=False):
                 print(s)
             print(s, file=f)
 
+# additionally print the cmd_args
+print0(vars(cmd_args))
+print0("="*100)
 # begin by printing this file (the Python code)
 print0(code)
 print0("="*100)
