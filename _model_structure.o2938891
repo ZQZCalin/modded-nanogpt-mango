@@ -1,0 +1,77 @@
+logs/finetune_muon/muon_rms-False_beta20.9_lr0.1_64f4.txt
+_orig_mod.skip_weights: shape=torch.Size([6]), parameters=6
+_orig_mod.embed.weight: shape=torch.Size([50257, 768]), parameters=38597376
+_orig_mod.value_embeds.0.weight: shape=torch.Size([50257, 768]), parameters=38597376
+_orig_mod.value_embeds.1.weight: shape=torch.Size([50257, 768]), parameters=38597376
+_orig_mod.value_embeds.2.weight: shape=torch.Size([50257, 768]), parameters=38597376
+_orig_mod.blocks.0.lambdas: shape=torch.Size([2]), parameters=2
+_orig_mod.blocks.0.attn.qkv_w: shape=torch.Size([3, 768, 768]), parameters=1769472
+_orig_mod.blocks.0.attn.lambdas: shape=torch.Size([2]), parameters=2
+_orig_mod.blocks.0.attn.c_proj.weight: shape=torch.Size([768, 768]), parameters=589824
+_orig_mod.blocks.0.mlp.c_fc.weight: shape=torch.Size([3072, 768]), parameters=2359296
+_orig_mod.blocks.0.mlp.c_proj.weight: shape=torch.Size([768, 3072]), parameters=2359296
+_orig_mod.blocks.1.lambdas: shape=torch.Size([2]), parameters=2
+_orig_mod.blocks.1.attn.qkv_w: shape=torch.Size([3, 768, 768]), parameters=1769472
+_orig_mod.blocks.1.attn.lambdas: shape=torch.Size([2]), parameters=2
+_orig_mod.blocks.1.attn.c_proj.weight: shape=torch.Size([768, 768]), parameters=589824
+_orig_mod.blocks.1.mlp.c_fc.weight: shape=torch.Size([3072, 768]), parameters=2359296
+_orig_mod.blocks.1.mlp.c_proj.weight: shape=torch.Size([768, 3072]), parameters=2359296
+_orig_mod.blocks.2.lambdas: shape=torch.Size([2]), parameters=2
+_orig_mod.blocks.2.attn.qkv_w: shape=torch.Size([3, 768, 768]), parameters=1769472
+_orig_mod.blocks.2.attn.lambdas: shape=torch.Size([2]), parameters=2
+_orig_mod.blocks.2.attn.c_proj.weight: shape=torch.Size([768, 768]), parameters=589824
+_orig_mod.blocks.2.mlp.c_fc.weight: shape=torch.Size([3072, 768]), parameters=2359296
+_orig_mod.blocks.2.mlp.c_proj.weight: shape=torch.Size([768, 3072]), parameters=2359296
+_orig_mod.blocks.3.lambdas: shape=torch.Size([2]), parameters=2
+_orig_mod.blocks.3.attn.qkv_w: shape=torch.Size([3, 768, 768]), parameters=1769472
+_orig_mod.blocks.3.attn.lambdas: shape=torch.Size([2]), parameters=2
+_orig_mod.blocks.3.attn.c_proj.weight: shape=torch.Size([768, 768]), parameters=589824
+_orig_mod.blocks.3.mlp.c_fc.weight: shape=torch.Size([3072, 768]), parameters=2359296
+_orig_mod.blocks.3.mlp.c_proj.weight: shape=torch.Size([768, 3072]), parameters=2359296
+_orig_mod.blocks.4.lambdas: shape=torch.Size([2]), parameters=2
+_orig_mod.blocks.4.attn.qkv_w: shape=torch.Size([3, 768, 768]), parameters=1769472
+_orig_mod.blocks.4.attn.lambdas: shape=torch.Size([2]), parameters=2
+_orig_mod.blocks.4.attn.c_proj.weight: shape=torch.Size([768, 768]), parameters=589824
+_orig_mod.blocks.4.mlp.c_fc.weight: shape=torch.Size([3072, 768]), parameters=2359296
+_orig_mod.blocks.4.mlp.c_proj.weight: shape=torch.Size([768, 3072]), parameters=2359296
+_orig_mod.blocks.5.lambdas: shape=torch.Size([2]), parameters=2
+_orig_mod.blocks.5.attn.qkv_w: shape=torch.Size([3, 768, 768]), parameters=1769472
+_orig_mod.blocks.5.attn.lambdas: shape=torch.Size([2]), parameters=2
+_orig_mod.blocks.5.attn.c_proj.weight: shape=torch.Size([768, 768]), parameters=589824
+_orig_mod.blocks.5.mlp.c_fc.weight: shape=torch.Size([3072, 768]), parameters=2359296
+_orig_mod.blocks.5.mlp.c_proj.weight: shape=torch.Size([768, 3072]), parameters=2359296
+_orig_mod.blocks.6.lambdas: shape=torch.Size([2]), parameters=2
+_orig_mod.blocks.6.attn.qkv_w: shape=torch.Size([3, 768, 768]), parameters=1769472
+_orig_mod.blocks.6.attn.lambdas: shape=torch.Size([2]), parameters=2
+_orig_mod.blocks.6.attn.c_proj.weight: shape=torch.Size([768, 768]), parameters=589824
+_orig_mod.blocks.6.mlp.c_fc.weight: shape=torch.Size([3072, 768]), parameters=2359296
+_orig_mod.blocks.6.mlp.c_proj.weight: shape=torch.Size([768, 3072]), parameters=2359296
+_orig_mod.blocks.7.lambdas: shape=torch.Size([2]), parameters=2
+_orig_mod.blocks.7.mlp.c_fc.weight: shape=torch.Size([3072, 768]), parameters=2359296
+_orig_mod.blocks.7.mlp.c_proj.weight: shape=torch.Size([768, 3072]), parameters=2359296
+_orig_mod.blocks.8.lambdas: shape=torch.Size([2]), parameters=2
+_orig_mod.blocks.8.attn.qkv_w: shape=torch.Size([3, 768, 768]), parameters=1769472
+_orig_mod.blocks.8.attn.lambdas: shape=torch.Size([2]), parameters=2
+_orig_mod.blocks.8.attn.c_proj.weight: shape=torch.Size([768, 768]), parameters=589824
+_orig_mod.blocks.8.mlp.c_fc.weight: shape=torch.Size([3072, 768]), parameters=2359296
+_orig_mod.blocks.8.mlp.c_proj.weight: shape=torch.Size([768, 3072]), parameters=2359296
+_orig_mod.blocks.9.lambdas: shape=torch.Size([2]), parameters=2
+_orig_mod.blocks.9.attn.qkv_w: shape=torch.Size([3, 768, 768]), parameters=1769472
+_orig_mod.blocks.9.attn.lambdas: shape=torch.Size([2]), parameters=2
+_orig_mod.blocks.9.attn.c_proj.weight: shape=torch.Size([768, 768]), parameters=589824
+_orig_mod.blocks.9.mlp.c_fc.weight: shape=torch.Size([3072, 768]), parameters=2359296
+_orig_mod.blocks.9.mlp.c_proj.weight: shape=torch.Size([768, 3072]), parameters=2359296
+_orig_mod.blocks.10.lambdas: shape=torch.Size([2]), parameters=2
+_orig_mod.blocks.10.attn.qkv_w: shape=torch.Size([3, 768, 768]), parameters=1769472
+_orig_mod.blocks.10.attn.lambdas: shape=torch.Size([2]), parameters=2
+_orig_mod.blocks.10.attn.c_proj.weight: shape=torch.Size([768, 768]), parameters=589824
+_orig_mod.blocks.10.mlp.c_fc.weight: shape=torch.Size([3072, 768]), parameters=2359296
+_orig_mod.blocks.10.mlp.c_proj.weight: shape=torch.Size([768, 3072]), parameters=2359296
+_orig_mod.blocks.11.lambdas: shape=torch.Size([2]), parameters=2
+_orig_mod.blocks.11.attn.qkv_w: shape=torch.Size([3, 768, 768]), parameters=1769472
+_orig_mod.blocks.11.attn.lambdas: shape=torch.Size([2]), parameters=2
+_orig_mod.blocks.11.attn.c_proj.weight: shape=torch.Size([768, 768]), parameters=589824
+_orig_mod.blocks.11.mlp.c_fc.weight: shape=torch.Size([3072, 768]), parameters=2359296
+_orig_mod.blocks.11.mlp.c_proj.weight: shape=torch.Size([768, 3072]), parameters=2359296
+_orig_mod.lm_head.weight: shape=torch.Size([50304, 768]), parameters=38633472
+Total trainable parameters: 275598388
