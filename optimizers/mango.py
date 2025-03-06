@@ -205,7 +205,11 @@ class Mango(torch.optim.Optimizer):
                 
                 # 7. Optionally apply RMS normalization.
                 if scale_rms:
-                    update.mul_(1 / (rms(update) + 1e-10))    # set RMS normalization eps smaller
+                    rms_eps = 1e-10     #1e-10
+                    update.mul_(1 / (rms(update) + rms_eps))    # set RMS normalization eps smaller
+                
+                # [Optional] Turn this on for logging to wandb
+                state['update'] = update
                 
                 # 8. Update the parameter.
                 p.data.add_(update, alpha=-lr)
