@@ -670,14 +670,27 @@ for step in range(train_steps + 1):
     # step the optimizers
     for opt in optimizers:
         opt.step()
-    # null the gradients
-    model.zero_grad(set_to_none=True)
     # logging
     approx_training_time_ms = training_time_ms + 1000 * (time.perf_counter() - t0)
     print0(f"step:{step+1}/{train_steps} train_loss:{train_loss} train_time:{approx_training_time_ms:.0f}ms step_avg:{approx_training_time_ms/(step + 1):.2f}ms", console=True)
     if master_process:
         # NOTE: this train_loss is the local loss on the master node, not averaged over all nodes.
         wandb.log({"loss": train_loss}, step=step)
+        # Visualizing: 
+        opt_metrics = {}
+        id_to_name = {id(param): name for name, param in model.named_parameters()}
+        for param, state in optimizer2.state.items():
+            name = id_to_name.get(id(param))
+            update = state.get("update")
+            rms = lambda t: torch.sqrt(torch.mean(t**2))
+            if name is not None and update is not None:
+                opt_metrics.update({
+                    f"updates/{name}": rms(update),
+                    f"grads/{name}": rms(param.grad)
+                })
+        wandb.log(opt_metrics, step=step)
+    # null the gradients
+    model.zero_grad(set_to_none=True)
 
 print0(f"peak memory allocated: {torch.cuda.max_memory_allocated() // 1024 // 1024} MiB "
        f"reserved: {torch.cuda.max_memory_reserved() // 1024 // 1024} MiB", console=True)
