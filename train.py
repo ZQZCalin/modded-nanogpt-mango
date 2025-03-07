@@ -29,7 +29,7 @@ import ast
 import wandb
 from dataclasses import asdict
 # move optimizers to a different folder for convenient configurations
-from optimizers import Muon, Mango
+from optimizers import Muon, Mango, SFMuon
 
 # -----------------------------------------------------------------------------
 # Additional argparser to interface with cmd and parallel submit
@@ -44,6 +44,11 @@ def str2bool(v):
     else:
         raise argparse.ArgumentTypeError("Boolean value expected.")
 
+def str2tuple(v):
+    assert isinstance(v, str)
+    res = [ast.literal_eval(e.strip()) for e in v.split(",")]
+    return tuple(res)
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Additional cmd args.")
     # basics
@@ -53,7 +58,10 @@ def parse_args():
     parser.add_argument("--log_folder", type=str, default="", help="Log subfolder name")
     parser.add_argument("--run_name", type=str, default="", help="Name your run")
     parser.add_argument("--wandb_project", type=str, default="nanogpt_speedrun", help="Log to wandb project name")
-    # optimizer-specific
+    # some auxiliary args
+    parser.add_argument("--compile_only", type=str2bool, default=False, help="Turn on to break after compiling.")
+    parser.add_argument("--advanced_log", type=str2bool, default=False, help="Turn on to log advanced info")
+    # optimizer-specific: Mango
     parser.add_argument("--mango_mat_lr", type=float, default=0.05, help="Mango-mat learning rate")
     parser.add_argument("--mango_mat_beta1", type=float, default=0.95, help="Mango-mat beta1")
     parser.add_argument("--mango_mat_beta2", type=float, default=0.0, help="Mango-mat beta2")
@@ -65,6 +73,10 @@ def parse_args():
     parser.add_argument("--mango_mat_laprop", type=str2bool, default=False, help="Mango_mat use laprop pre-conditioning")
     parser.add_argument("--mango_mat_precond_power", type=float, default=0.0, help="Mango_mat preconditioning power")
     parser.add_argument("--mango_mat_postcond_power", type=float, default=0.0, help="Mango_mat postconditioning power")
+    # optimizer-specific: SFMuon
+    parser.add_argument("--sfmuon_lr", type=float, default=0.05)
+    parser.add_argument("--sfmuon_momentum", type=str2tuple, default="0.95,0.95,300")
+    parser.add_argument("--sfmuon_nesterov_beta", type=str2tuple, default="0.95,0.95,300")
     return parser.parse_args()
 
 cmd_args = parse_args()
@@ -521,6 +533,16 @@ elif cmd_args.optimizer == "mango":
                        postcond_power=cmd_args.mango_mat_postcond_power,
                        **parse_backend_args(cmd_args.mango_mat_backend_args))
     optimizers = [optimizer1, optimizer2]
+elif cmd_args.optimizer == "sfmuon":
+    adam_params = [dict(params=head_params, lr=0.22), dict(params=embed_params, lr=0.6), dict(params=scalar_params, lr=0.04)]
+    optimizer1 = torch.optim.Adam(adam_params, betas=(0.8, 0.95), eps=1e-10, fused=True)
+    optimizer2 = SFMuon(hidden_matrix_params, 
+                        lr=cmd_args.sfmuon_lr, 
+                        momentum=cmd_args.sfmuon_momentum[1],
+                        nesterov_beta=cmd_args.sfmuon_nesterov_beta[1],
+                        rank=rank, 
+                        world_size=world_size)
+    optimizers = [optimizer1, optimizer2]
 else:
     raise ValueError(f"optimizer='{cmd_args.optimizer}' not implemented.")
 for opt in optimizers:
@@ -571,6 +593,10 @@ model.load_state_dict(initial_state["model"])
 for opt, opt_state in zip(optimizers, initial_state["optimizers"]):
     opt.load_state_dict(opt_state)
 del initial_state
+
+# Compile on a new node for test purpose
+if cmd_args.compile_only:
+    raise KeyboardInterrupt
 
 ########################################
 #           Logging to WandB           #
@@ -667,6 +693,15 @@ for step in range(train_steps + 1):
         for group in optimizer2.param_groups:
             frac = min(step / 300, 1) # momentum warmup for muon
             group["beta1"] = (1 - frac) * 0.85 + frac * 0.95
+    # sfmuon-specific
+    if cmd_args.optimizer == "sfmuon":
+        for group in optimizer2.param_groups:
+            momentum_start, momentum_end, momentum_warmup = cmd_args.sfmuon_momentum
+            nesterov_start, nesterov_end, nesterov_warmup = cmd_args.sfmuon_nesterov_beta
+            frac1 = min(step / momentum_warmup, 1)
+            frac2 = min(step / nesterov_warmup, 1)
+            group["momentum"] = (1 - frac1) * momentum_start + frac1 * momentum_end
+            group["nesterov_beta"] = (1 - frac2) * nesterov_start + frac2 * nesterov_end
     # step the optimizers
     for opt in optimizers:
         opt.step()
@@ -677,18 +712,22 @@ for step in range(train_steps + 1):
         # NOTE: this train_loss is the local loss on the master node, not averaged over all nodes.
         wandb.log({"loss": train_loss}, step=step)
         # Visualizing: 
-        opt_metrics = {}
-        id_to_name = {id(param): name for name, param in model.named_parameters()}
-        for param, state in optimizer2.state.items():
-            name = id_to_name.get(id(param))
-            update = state.get("update")
-            rms = lambda t: torch.sqrt(torch.mean(t**2))
-            if name is not None and update is not None:
-                opt_metrics.update({
-                    f"updates/{name}": rms(update),
-                    f"grads/{name}": rms(param.grad)
-                })
-        wandb.log(opt_metrics, step=step)
+        if cmd_args.advanced_log:
+            opt_metrics = {}
+            id_to_name = {id(param): name for name, param in model.named_parameters()}
+            for param, state in optimizer2.state.items():
+                name = id_to_name.get(id(param))
+                update = state.get("update")
+                rms = lambda t: torch.sqrt(torch.mean(t**2))
+                if name is not None and update is not None:
+                    opt_metrics.update({
+                        f"updates/{name}": rms(update),
+                    })
+                if name is not None and param.grad:
+                    opt_metrics.update({
+                        f"grads/{name}": rms(param.grad)
+                    })
+            wandb.log(opt_metrics, step=step)
     # null the gradients
     model.zero_grad(set_to_none=True)
 

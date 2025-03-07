@@ -65,27 +65,58 @@ script="train"
 # )
 
 # different betas
-betas=(0.0 0.9 0.95 0.99)
-beta2=${betas[0]}
-rms=True
-lrs=(0.0018 0.003 0.001)
-# rms=False
-# lrs=(0.01 0.025 0.05 0.075 0.1)
-# lr=${lrs[0]}
-lr=7.5e-4
-name="muon_rms-${rms}_beta2${beta2}_lr${lr}"
+# betas=(0.0 0.9 0.95 0.99)
+# beta2=${betas[0]}
+# # rms=True
+# # lrs=(0.0018 0.003 0.001)
+# # rms=False
+# # lrs=(0.01 0.025 0.05 0.075 0.1)
+# # lr=${lrs[0]}
+# # name="muon_rms-${rms}_beta2${beta2}_lr${lr}"
+# rms=True
+# lr=7.5e-4
+# name="muon_rms-${rms}_eps0_beta2${beta2}_lr${lr}"
 
+# beta2=0
+# rms=False
+# lr=0.05
+# name="muon_baseline"
+# # rms=True
+# # lr=7.5e-4
+# # name="muon_rms-False_eps1e-10_lr7.5e-4"
+
+# args=(
+#     # basic configs
+#     "--run_name ${name}"
+#     "--wandb_project visualize_nanogpt_muon"  # comment out this line to use default project name
+#     "--log_folder test_mango"
+#     "--random_seed 42"
+#     # optimizer configs
+#     "--optimizer mango"
+#     "--mango_mat_lr ${lr}"
+#     "--mango_mat_beta2 ${beta2}"
+#     "--mango_mat_scale_rms ${rms}"
+#     "--mango_mat_precond_power 0.5"
+#     # some unrelated configs for convenience
+#     "--compile_only False"  # turn on to warmup the node (for the first run)
+#     "--advanced_log False"  # turn on to log rms norms
+# )
+
+lr=0.05
+momentum="0.85,0.95,300"
+nesterov_beta="0.85,0.95,300"
+name="sfmuon_test"
 args=(
     # basic configs
     "--run_name ${name}"
-    "--log_folder finetune_muon"
+    "--wandb_project nanogpt_speedrun"  # comment out this line to use default project name
+    "--log_folder sfmuon"
     "--random_seed 42"
     # optimizer configs
-    "--optimizer mango"
-    "--mango_mat_lr ${lr}"
-    "--mango_mat_beta2 ${beta2}"
-    "--mango_mat_scale_rms ${rms}"
-    "--mango_mat_precond_power 0.5"
+    "--optimizer sfmuon"
+    "--sfmuon_lr ${lr}"
+    "--sfmuon_momentum ${momentum}"
+    "--sfmuon_nesterov_beta ${nesterov_beta}"
 )
 
 
@@ -101,8 +132,8 @@ mkdir -p $OUTPUT_PATH
 GPU=L40S
 NODES=1
 mode=0
-# mode=1      # uncomment to run locally instead of submit to scc
-# mode=2      # uncomment to run batch submits
+mode=1      # uncomment to run locally instead of submit to scc
+mode=2      # uncomment to run batch submits
 
 submit_job() {
     local args=("$@")
@@ -138,6 +169,7 @@ fi
 # -----------------------------------------------------------------------------
 # Batch submit if necessary
 
+# Batch submit 1: pre-conditionings
 # betas=(0.0 0.9 0.95 0.99)
 # lrs=(3e-3 2e-3 1e-3 7.5e-4 5e-4 2.5e-4)
 # rms=True
@@ -164,3 +196,44 @@ fi
 #         submit_job ${args[@]}
 #     done
 # done
+
+# 2. Schedule-free muon
+list_momentum=(
+    "0.85,0.95"
+)
+list_nesterov=(
+    "0.85,0.97"
+    "0.9,0.97"
+    "0.85,0.95"
+    "0.85,0.9"
+    "0.8,0.9"
+    "0.85,0.85"
+    "0.75,0.85"
+)
+list_warmup=(300)
+list_lr=(0.05 0.04 0.06 0.03 0.07)
+for mom in "${list_momentum[@]}"; do
+    for nes in "${list_nesterov[@]}"; do
+        for warmup in "${list_warmup[@]}"; do
+            for lr in "${list_lr[@]}"; do
+                momentum="${mom},${warmup}"
+                nesterov="${nes},${warmup}"
+                name="sfmuon_mom${momentum}_nes${nesterov}_lr${lr}"
+                args=(
+                    # basic configs
+                    "--run_name ${name}"
+                    "--wandb_project nanogpt_speedrun"  # comment out this line to use default project name
+                    "--log_folder sfmuon"
+                    "--random_seed 42"
+                    # optimizer configs
+                    "--optimizer sfmuon"
+                    "--sfmuon_lr ${lr}"
+                    "--sfmuon_momentum ${momentum}"
+                    "--sfmuon_nesterov_beta ${nesterov}"
+                )
+                # echo $name ${args[@]}
+                submit_job ${args[@]}
+            done
+        done
+    done
+done

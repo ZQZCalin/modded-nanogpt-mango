@@ -36,30 +36,14 @@ def zeropower_via_newtonschulz5(G: Tensor, steps: int) -> Tensor:
 
 class SFMuon(torch.optim.Optimizer):
     """
-    Muon - MomentUm Orthogonalized by Newton-schulz
+    Schedule-free Muon.
 
-    https://kellerjordan.github.io/posts/muon/
-
-    Muon internally runs standard SGD-momentum, and then performs an orthogonalization post-
-    processing step, in which each 2D parameter's update is replaced with the nearest orthogonal
-    matrix. To efficiently orthogonalize each update, we use a Newton-Schulz iteration, which has
-    the advantage that it can be stably run in bfloat16 on the GPU.
-
-    Some warnings:
-    - This optimizer should not be used for the embedding layer, the final fully connected layer,
-    or any {0,1}-D parameters; those should all be optimized by a standard method (e.g., AdamW).
-    - To use it with 4D convolutional filters, it works well to just flatten their last 3 dimensions.
-
-    Arguments:
-        lr: The learning rate used by the internal SGD.
-        momentum: The momentum used by the internal SGD.
-        nesterov: Whether to use Nesterov-style momentum in the internal SGD. (recommended)
-        ns_steps: The number of Newton-Schulz iteration steps to use.
+    For now, we only decoupled momentum constant and nesterov update constant.
     """
-    def __init__(self, params, lr=0.02, momentum=0.95, nesterov=True, ns_steps=5, rank=0, world_size=1):
+    def __init__(self, params, lr=0.02, momentum=0.95, nesterov=True, nesterov_beta=0.95, ns_steps=5, rank=0, world_size=1):
         self.rank = rank
         self.world_size = world_size
-        defaults = dict(lr=lr, momentum=momentum, nesterov=nesterov, ns_steps=ns_steps)
+        defaults = dict(lr=lr, momentum=momentum, nesterov=nesterov, nesterov_beta=nesterov_beta, ns_steps=ns_steps)
         params: list[Tensor] = [*params]
         param_groups = []
         for size in {p.numel() for p in params}:
@@ -93,7 +77,7 @@ class SFMuon(torch.optim.Optimizer):
                         state["momentum_buffer"] = torch.zeros_like(g)
                     buf: Tensor = state["momentum_buffer"]
                     buf.lerp_(g, 1 - group["momentum"])
-                    g = g.lerp_(buf, group["momentum"]) if group["nesterov"] else buf
+                    g = g.lerp_(buf, group["nesterov_beta"]) if group["nesterov"] else buf
                     g = zeropower_via_newtonschulz5(g, steps=group["ns_steps"]).flatten()
                 else:
                     g = update_buffer_views[self.rank]
