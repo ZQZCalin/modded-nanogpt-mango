@@ -97,7 +97,7 @@ normalize_backends = dict(
 
 class Mango(torch.optim.Optimizer):
     def __init__(self, params, lr=0.02, beta1=0.95, beta2=0.95, nesterov=True,
-                 backend="newtonschulz5", scale_rms=True, eps=1e-8, laprop=False,
+                 backend="newtonschulz5", scale_rms=True, grafting=False,
                  precond_power=0.5, postcond_power=0.0, **backend_args):
         """
         Mango optimizer.
@@ -122,8 +122,7 @@ class Mango(torch.optim.Optimizer):
                  precond_power=0.0, postcond_power=0.0)
         """
         defaults = dict(lr=lr, beta1=beta1, beta2=beta2, nesterov=nesterov,
-                        backend=backend, scale_rms=scale_rms, eps=eps,
-                        laprop=laprop, precond_power=precond_power, postcond_power=postcond_power,
+                        backend=backend, scale_rms=scale_rms, grafting=grafting, 
                         backend_args=backend_args)
         super(Mango, self).__init__(params, defaults)
         
@@ -141,6 +140,7 @@ class Mango(torch.optim.Optimizer):
             beta2 = group['beta2']
             nesterov = group['nesterov']
             scale_rms = group['scale_rms']
+            grafting = group['grafting']
             eps = group['eps']
             laprop = group['laprop']
             precond_power = group['precond_power']
@@ -204,10 +204,17 @@ class Mango(torch.optim.Optimizer):
                     update.mul_(1 / (tensor_pow(state['grad_squared'], postcond_power) + eps))
                 
                 # 7. Optionally apply RMS normalization.
-                if scale_rms:
-                    rms_eps = 1e-10     #1e-10
-                    update.mul_(1 / (rms(update) + rms_eps))    # set RMS normalization eps smaller
+                if scale_rms and not grafting:
+                    # rms_eps = 1e-10     #1e-10
+                    # update.mul_(1 / (rms(update) + rms_eps))    # set RMS normalization eps smaller
+                    # edge case when update = 0
+                    if state['rms_norm'] > 0:
+                        update.mul_(1 / rms(update))
                 
+                if grafting:    # grafting has higher priority than scale_rms
+                    if state['rms_norm'] > 0:
+                        update.mul_(state['rms_norm'] / rms(update))
+
                 # [Optional] Turn this on for logging to wandb
                 state['update'] = update
                 
