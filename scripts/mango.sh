@@ -1,102 +1,39 @@
 #!/bin/bash
 
 # -----------------------------------------------------------------------------
-# Experiment configs
-# -> The following should be used as the muon baseline on single L40S gpu
-# seeds=(42 21 1009 324 5646)
-# seed=${seeds[0]}
-# name="muon_seed${seed}"
-
-# args=(
-#     "--log_folder muon"
-#     "--run_name ${name}"
-#     "--random_seed ${seed}"
-# )
-
-# script="train"
-
-# -> Reproducing 0201 record on single gpu (with specified random seeds)
-# seeds=(42 21 1009 324 5646)
-# seed=${seeds[4]}
-# name="muon0201_seed${seed}"
-
-# args=(
-#     "--log_folder muon0201_record"
-#     "--run_name ${name}"
-#     "--random_seed ${seed}"
-# )
-# script="train_record_feb1"
-
-# -----------------------------------------------------------------------------
 # Alternative optimizers
 script="train"
 
-# precmuon (we've seen this is better on JAX)
-# beta2=0.95
-# # rms=True
-# # lrs=(0.0018 0.003 0.001
-# #     6e-4 3e-4 1e-4)
-# rms=False
-# lrs=(0.05 0.1 0.025
-#     0.01 6e-3 3e-3 1e-3)
-# lr=${lrs[2]}
-# name="precmuon_rms-${rms}_lr${lr}"
-
-# muon (as a baseline)
-# beta2=0.0
-# # rms=True
-# # lrs=(0.0018 0.003 0.001)
-# rms=False
-# lrs=(0.05 0.1 0.025)
-# lr=${lrs[2]}
-# name="muon_rms-${rms}_lr${lr}"
-
-# args=(
-#     # basic configs
-#     "--log_folder muon_rms"
-#     "--random_seed 42"
-#     "--run_name ${name}"
-#     # optimizer configs
-#     "--optimizer mango"
-#     "--mango_mat_lr ${lr}"
-#     "--mango_mat_beta2 ${beta2}"
-#     "--mango_mat_scale_rms ${rms}"
-#     "--mango_mat_precond_power 0.5"
-# )
-
-# different betas
-# betas=(0.0 0.9 0.95 0.99)
-# beta2=${betas[0]}
-# # rms=True
-# # lrs=(0.0018 0.003 0.001)
-# # rms=False
-# # lrs=(0.01 0.025 0.05 0.075 0.1)
-# # lr=${lrs[0]}
-# # name="muon_rms-${rms}_beta2${beta2}_lr${lr}"
-# rms=True
-# lr=7.5e-4
-# name="muon_rms-${rms}_eps0_beta2${beta2}_lr${lr}"
-
-beta2=0
-rms=False
 lr=0.05
-name="muon_baseline"
-# rms=True
-# lr=7.5e-4
-# name="muon_rms-False_eps1e-10_lr7.5e-4"
+beta1="0.85,0.95,300"
+beta2="0,0.95,300"
+rms=False
+grafting=True
+cond=True
+laprop=False
+p_pre=0.5
+p_post=0.0
 
+name=test_mango
+
+DATE=$(date +"%Y-%m-%d")
 args=(
     # basic configs
     "--run_name ${name}"
-    "--wandb_project visualize_nanogpt_muon"  # comment out this line to use default project name
-    "--log_folder test_mango"
+    "--wandb_project nanogpt_speedrun"  # comment out this line to use default project name
+    "--log_folder mango_${DATE}"
     "--random_seed 42"
     # optimizer configs
     "--optimizer mango"
     "--mango_mat_lr ${lr}"
+    "--mango_mat_beta1 ${beta1}"
     "--mango_mat_beta2 ${beta2}"
     "--mango_mat_scale_rms ${rms}"
-    "--mango_mat_precond_power 0.5"
+    "--mango_mat_grafting ${grafting}"
+    "--mango_mat_use_cond ${cond}"
+    "--mango_mat_laprop ${laprop}"
+    "--mango_mat_precond_power ${p_pre}"
+    "--mango_mat_postcond_power ${p_post}"
     # some unrelated configs for convenience
     "--compile_only False"  # turn on to warmup the node (for the first run)
     "--advanced_log False"  # turn on to log rms norms
@@ -127,7 +64,7 @@ submit_job() {
 #$ -l h="!scc-506"          # Blacklists bad nodes
 #$ -l gpus=${NODES}
 #$ -l gpu_type=${GPU}       # Specifies the gpu type
-#$ -l h_rt=8:00:00          # Specifies the hard time limit for the job
+#$ -l h_rt=2:00:00          # Specifies the hard time limit for the job
 #$ -N "$name".sh
 #$ -o $OUTPUT_PATH/\$JOB_NAME.o\$JOB_ID
 #$ -e $OUTPUT_PATH/\$JOB_NAME.e\$JOB_ID
@@ -147,10 +84,12 @@ if [[ $mode -eq 1 ]]; then
     torchrun --standalone --nproc_per_node=${NODES} ${script}.py ${args[@]}
 elif [[ $mode -eq 0 ]]; then
     submit_job ${args[@]}
+elif [[ $mode -ne 2 ]]; then
+    exit    # quit if not for batch submit
 fi
 
 # -----------------------------------------------------------------------------
-# Batch submit if necessary
+# Below is batch submit script
 
 # Batch submit 1: pre-conditionings
 # betas=(0.0 0.9 0.95 0.99)

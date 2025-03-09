@@ -98,6 +98,7 @@ normalize_backends = dict(
 class Mango(torch.optim.Optimizer):
     def __init__(self, params, lr=0.02, beta1=0.95, beta2=0.95, nesterov=True,
                  backend="newtonschulz5", scale_rms=True, grafting=False,
+                 eps=1e-8, laprop=False, use_cond=False,
                  precond_power=0.5, postcond_power=0.0, **backend_args):
         """
         Mango optimizer.
@@ -123,6 +124,8 @@ class Mango(torch.optim.Optimizer):
         """
         defaults = dict(lr=lr, beta1=beta1, beta2=beta2, nesterov=nesterov,
                         backend=backend, scale_rms=scale_rms, grafting=grafting, 
+                        eps=eps, laprop=laprop, use_cond=use_cond,
+                        precond_power=precond_power, postcond_power=postcond_power,
                         backend_args=backend_args)
         super(Mango, self).__init__(params, defaults)
         
@@ -143,6 +146,7 @@ class Mango(torch.optim.Optimizer):
             grafting = group['grafting']
             eps = group['eps']
             laprop = group['laprop']
+            use_cond = group['use_cond']
             precond_power = group['precond_power']
             postcond_power = group['postcond_power']
             backend = group['backend']
@@ -163,19 +167,19 @@ class Mango(torch.optim.Optimizer):
                 if not state:
                     state['step'] = 0
                     state['momentum'] = torch.zeros_like(p, memory_format=torch.preserve_format)
-                    if beta2:
+                    if use_cond:
                         state['grad_squared'] = torch.zeros_like(p, memory_format=torch.preserve_format)
                     else:
                         state['grad_squared'] = None
                         
                 state['step'] += 1
                 
-                # 1. Update the grad_squared preconditioner if beta2 is used.
-                if beta2:
+                # 1. Update the grad_squared preconditioner if use_cond is used.
+                if use_cond:
                     state['grad_squared'].mul_(beta2).addcmul_(grad, grad, value=1 - beta2)
                 
                 # 2. Optionally apply LaProp-style preconditioning.
-                if beta2 and precond_power and laprop:
+                if use_cond and precond_power and laprop:
                     update = grad / (tensor_pow(state['grad_squared'], precond_power) + eps)
                 else:
                     update = grad.clone()
@@ -192,15 +196,16 @@ class Mango(torch.optim.Optimizer):
                     update = momentum.clone()
                 
                 # 4. If not using LaProp, apply Adam-style preconditioning.
-                if beta2 and precond_power and (not laprop):
+                if use_cond and precond_power and (not laprop):
                     update.mul_(1 / (tensor_pow(state['grad_squared'], precond_power) + eps))
                 
                 # 5. Optionally apply a normalization function.
+                state['rms_norm'] = rms(update)
                 if normalize_fn is not None:
                     update = normalize_fn(update)
                     
                 # 6. Apply post-conditioning if postcond_power is set.
-                if beta2 and postcond_power:
+                if use_cond and postcond_power:
                     update.mul_(1 / (tensor_pow(state['grad_squared'], postcond_power) + eps))
                 
                 # 7. Optionally apply RMS normalization.

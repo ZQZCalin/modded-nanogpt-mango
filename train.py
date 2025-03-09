@@ -63,20 +63,22 @@ def parse_args():
     parser.add_argument("--advanced_log", type=str2bool, default=False, help="Turn on to log advanced info")
     # optimizer-specific: Mango
     parser.add_argument("--mango_mat_lr", type=float, default=0.05, help="Mango-mat learning rate")
-    parser.add_argument("--mango_mat_beta1", type=float, default=0.95, help="Mango-mat beta1")
-    parser.add_argument("--mango_mat_beta2", type=float, default=0.0, help="Mango-mat beta2")
+    parser.add_argument("--mango_mat_beta1", type=str2tuple, default="0.85,0.95,300", help="Mango-mat beta1")
+    parser.add_argument("--mango_mat_beta2", type=str2tuple, default="0,0,300", help="Mango-mat beta2")
     parser.add_argument("--mango_mat_nesterov", type=str2bool, default=True, help="Mango-mat nesterov momentum")
     parser.add_argument("--mango_mat_backend", type=str, default="newtonschulz5", help="Mango_mat normalize backend")
     parser.add_argument("--mango_mat_backend_args", type=str, default="steps=5,scale_dim=True", help="Mango_mat backend extra args")
     parser.add_argument("--mango_mat_scale_rms", type=str2bool, default=False, help="Mango_mat normalize update by rms norm")
+    parser.add_argument("--mango_mat_grafting", type=str2bool, default=False, help="Mango_mat use grafting")
     parser.add_argument("--mango_mat_eps", type=float, default=1e-8, help="Mango_mat eps")
+    parser.add_argument("--mango_mat_use_cond", type=str2bool, default=False, help="Mango_mat turn on conditioning")
     parser.add_argument("--mango_mat_laprop", type=str2bool, default=False, help="Mango_mat use laprop pre-conditioning")
     parser.add_argument("--mango_mat_precond_power", type=float, default=0.0, help="Mango_mat preconditioning power")
     parser.add_argument("--mango_mat_postcond_power", type=float, default=0.0, help="Mango_mat postconditioning power")
     # optimizer-specific: SFMuon
     parser.add_argument("--sfmuon_lr", type=float, default=0.05)
-    parser.add_argument("--sfmuon_momentum", type=str2tuple, default="0.95,0.95,300")
-    parser.add_argument("--sfmuon_nesterov_beta", type=str2tuple, default="0.95,0.95,300")
+    parser.add_argument("--sfmuon_momentum", type=str2tuple, default="0.85,0.95,300")
+    parser.add_argument("--sfmuon_nesterov_beta", type=str2tuple, default="0.85,0.95,300")
     return parser.parse_args()
 
 cmd_args = parse_args()
@@ -522,12 +524,14 @@ elif cmd_args.optimizer == "mango":
     optimizer1 = torch.optim.Adam(adam_params, betas=(0.8, 0.95), eps=1e-10, fused=True)
     optimizer2 = Mango(hidden_matrix_params, 
                        lr=cmd_args.mango_mat_lr, 
-                       beta1=cmd_args.mango_mat_beta1, 
-                       beta2=cmd_args.mango_mat_beta2, 
+                       beta1=cmd_args.mango_mat_beta1[1],   # change to tuple 
+                       beta2=cmd_args.mango_mat_beta2[1], 
                        nesterov=cmd_args.mango_mat_nesterov,
                        backend=cmd_args.mango_mat_backend,
                        scale_rms=cmd_args.mango_mat_scale_rms, 
+                       grafting=cmd_args.mango_mat_grafting,
                        eps=cmd_args.mango_mat_eps, 
+                       use_cond=cmd_args.mango_mat_use_cond,
                        laprop=cmd_args.mango_mat_laprop,
                        precond_power=cmd_args.mango_mat_precond_power, 
                        postcond_power=cmd_args.mango_mat_postcond_power,
@@ -617,6 +621,10 @@ if master_process:
 #        Training and validation       #
 ########################################
 
+def warmup_momentum(step, start, end, warmup):
+    frac = min(step / warmup, 1)
+    return (1 - frac) * start + frac * end
+
 # Simulate parallel training on a singl GPU
 simulate_world_size = 8
 assert simulate_world_size % world_size == 0
@@ -691,8 +699,8 @@ for step in range(train_steps + 1):
     # mango-specific
     if cmd_args.optimizer == "mango":
         for group in optimizer2.param_groups:
-            frac = min(step / 300, 1) # momentum warmup for muon
-            group["beta1"] = (1 - frac) * 0.85 + frac * 0.95
+            group["beta1"] = warmup_momentum(step, *cmd_args.mango_mat_beta1)
+            group["beta2"] = warmup_momentum(step, *cmd_args.mango_mat_beta2)
     # sfmuon-specific
     if cmd_args.optimizer == "sfmuon":
         for group in optimizer2.param_groups:
