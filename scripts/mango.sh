@@ -6,21 +6,22 @@ script="train"
 
 lr=0.05
 beta1="0.85,0.95,300"
-beta2="0,0.95,300"
+beta2="0.95,0.95,300"
 rms=False
-grafting=True
+grafting=False
 cond=True
 laprop=False
 p_pre=0.5
 p_post=0.0
 
-name=test_mango
+name=precmuon
 
 DATE=$(date +"%Y-%m-%d")
 args=(
     # basic configs
     "--run_name ${name}"
-    "--wandb_project nanogpt_speedrun"  # comment out this line to use default project name
+    # "--wandb_project nanogpt_speedrun"  # comment out this line to use default project name
+    "--wandb_project visualize_nanogpt_muon"
     "--log_folder mango_${DATE}"
     "--random_seed 42"
     # optimizer configs
@@ -36,7 +37,7 @@ args=(
     "--mango_mat_postcond_power ${p_post}"
     # some unrelated configs for convenience
     "--compile_only False"  # turn on to warmup the node (for the first run)
-    "--advanced_log False"  # turn on to log rms norms
+    "--advanced_log True"  # turn on to log rms norms
 )
 
 

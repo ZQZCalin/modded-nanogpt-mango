@@ -725,15 +725,10 @@ for step in range(train_steps + 1):
             id_to_name = {id(param): name for name, param in model.named_parameters()}
             for param, state in optimizer2.state.items():
                 name = id_to_name.get(id(param))
-                update = state.get("update")
-                rms = lambda t: torch.sqrt(torch.mean(t**2))
-                if name is not None and update is not None:
+                param_logs = state.get("logs")
+                if name is not None and param_logs is not None:
                     opt_metrics.update({
-                        f"updates/{name}": rms(update),
-                    })
-                if name is not None and param.grad:
-                    opt_metrics.update({
-                        f"grads/{name}": rms(param.grad)
+                        f"{k}/{name}": v for k, v in param_logs.items()
                     })
             wandb.log(opt_metrics, step=step)
     # null the gradients

@@ -173,6 +173,10 @@ class Mango(torch.optim.Optimizer):
                         state['grad_squared'] = None
                         
                 state['step'] += 1
+
+                state['logs'] = {
+                    "grads": rms(grad)
+                }  # update logging
                 
                 # 1. Update the grad_squared preconditioner if use_cond is used.
                 if use_cond:
@@ -188,6 +192,8 @@ class Mango(torch.optim.Optimizer):
                 momentum = state['momentum']
                 momentum.mul_(beta1).add_(update)
                 state['momentum'] = momentum  # (state update is in-place)
+
+                state['logs'].update({"momentum": rms(momentum)})
                 
                 # Use Nesterov lookahead if specified.
                 if nesterov:
@@ -195,14 +201,20 @@ class Mango(torch.optim.Optimizer):
                 else:
                     update = momentum.clone()
                 
+                state['logs'].update({"nesterov": rms(update)})
+                
                 # 4. If not using LaProp, apply Adam-style preconditioning.
                 if use_cond and precond_power and (not laprop):
                     update.mul_(1 / (tensor_pow(state['grad_squared'], precond_power) + eps))
+
+                state['logs'].update({"prec": rms(update)})
                 
                 # 5. Optionally apply a normalization function.
                 state['rms_norm'] = rms(update)
                 if normalize_fn is not None:
                     update = normalize_fn(update)
+
+                state['logs'].update({"normalized": rms(update)})
                     
                 # 6. Apply post-conditioning if postcond_power is set.
                 if use_cond and postcond_power:
@@ -219,9 +231,6 @@ class Mango(torch.optim.Optimizer):
                 if grafting:    # grafting has higher priority than scale_rms
                     if state['rms_norm'] > 0:
                         update.mul_(state['rms_norm'] / rms(update))
-
-                # [Optional] Turn this on for logging to wandb
-                state['update'] = update
                 
                 # 8. Update the parameter.
                 p.data.add_(update, alpha=-lr)
