@@ -59,7 +59,7 @@ class AdamW(torch.optim.Optimizer):
                     g = update_buffer_views[self.rank]
                 if base_i > 0:
                     update_prev() # async all_gather instead of sync all_reduce by @YouJiacheng
-                g = g.to(update_buffer.dtype)
+                g = g.to(update_buffer.dtype) # manually match dtype
                 handle = dist.all_gather_into_tensor(update_buffer, g, async_op=True)
                 params_world = params[base_i : base_i + self.world_size]
             update_prev()
