@@ -29,7 +29,7 @@ import ast
 import wandb
 from dataclasses import asdict
 # move optimizers to a different folder for convenient configurations
-from optimizers import Muon, Mango, SFMuon
+from optimizers import Muon, Mango, SFMuon, AdamW
 
 # -----------------------------------------------------------------------------
 # Additional argparser to interface with cmd and parallel submit
@@ -511,9 +511,16 @@ if cmd_args.optimizer == "muon":
     adam_params = [dict(params=head_params, lr=0.22), dict(params=embed_params, lr=0.6), dict(params=scalar_params, lr=0.04)]
     # small adam epsilon by @YouJiacheng. this is an alternate method of fixing the world_size dependence
     # discovered by @fernbear.bsky.social https://x.com/hi_tysam/status/1879692937589875094
-    optimizer1 = torch.optim.Adam(adam_params, betas=(0.8, 0.95), eps=1e-10, fused=True)
+    # optimizer1 = torch.optim.Adam(adam_params, betas=(0.8, 0.95), eps=1e-10, fused=True)
+    # testing self-implemented AdamW:
+    optimizer1 = [
+        AdamW(head_params, lr=0.22, b1=0.8, b2=0.95, eps=1e-10, rank=rank, world_size=world_size),
+        AdamW(embed_params, lr=0.6, b1=0.8, b2=0.95, eps=1e-10, rank=rank, world_size=world_size),
+        AdamW(scalar_params, lr=0.04, b1=0.8, b2=0.95, eps=1e-10, rank=rank, world_size=world_size)
+    ]
     optimizer2 = Muon(hidden_matrix_params, lr=0.05, momentum=0.95, rank=rank, world_size=world_size)
-    optimizers = [optimizer1, optimizer2]
+    # optimizers = [optimizer1, optimizer2]
+    optimizers = [*optimizer1, optimizer2]
 elif cmd_args.optimizer == "mango":
     adam_params = [dict(params=head_params, lr=0.22), dict(params=embed_params, lr=0.6), dict(params=scalar_params, lr=0.04)]
     # optimizer1 = Mango(adam_params, beta1=0.8, beta2=0.95, nesterov=False,

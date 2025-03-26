@@ -3,17 +3,19 @@
 # -----------------------------------------------------------------------------
 # Experiment configs
 # -> The following should be used as the muon baseline on single L40S gpu
-# seeds=(42 21 1009 324 5646)
-# seed=${seeds[0]}
+seeds=(42 21 1009 324 5646)
+seed=${seeds[0]}
 # name="muon_seed${seed}"
+name="muon_test-adamw"
 
-# args=(
-#     "--log_folder muon"
-#     "--run_name ${name}"
-#     "--random_seed ${seed}"
-# )
+args=(
+    "--log_folder muon"
+    "--run_name ${name}"
+    "--random_seed ${seed}"
+    "--optimizer muon"
+)
 
-# script="train"
+script="train"
 
 # -> Reproducing 0201 record on single gpu (with specified random seeds)
 # seeds=(42 21 1009 324 5646)
@@ -29,7 +31,7 @@
 
 # -----------------------------------------------------------------------------
 # Alternative optimizers
-script="train"
+# script="train"
 
 # precmuon (we've seen this is better on JAX)
 # beta2=0.95
@@ -77,30 +79,30 @@ script="train"
 # lr=7.5e-4
 # name="muon_rms-${rms}_eps0_beta2${beta2}_lr${lr}"
 
-beta2=0
-rms=False
-lr=0.05
-name="muon_baseline"
-# rms=True
-# lr=7.5e-4
-# name="muon_rms-False_eps1e-10_lr7.5e-4"
+# beta2=0
+# rms=False
+# lr=0.05
+# name="muon_baseline"
+# # rms=True
+# # lr=7.5e-4
+# # name="muon_rms-False_eps1e-10_lr7.5e-4"
 
-args=(
-    # basic configs
-    "--run_name ${name}"
-    "--wandb_project visualize_nanogpt_muon"  # comment out this line to use default project name
-    "--log_folder test_mango"
-    "--random_seed 42"
-    # optimizer configs
-    "--optimizer mango"
-    "--mango_mat_lr ${lr}"
-    "--mango_mat_beta2 ${beta2}"
-    "--mango_mat_scale_rms ${rms}"
-    "--mango_mat_precond_power 0.5"
-    # some unrelated configs for convenience
-    "--compile_only True"  # turn on to warmup the node (for the first run)
-    "--advanced_log False"  # turn on to log rms norms
-)
+# args=(
+#     # basic configs
+#     "--run_name ${name}"
+#     "--wandb_project visualize_nanogpt_muon"  # comment out this line to use default project name
+#     "--log_folder test_mango"
+#     "--random_seed 42"
+#     # optimizer configs
+#     "--optimizer mango"
+#     "--mango_mat_lr ${lr}"
+#     "--mango_mat_beta2 ${beta2}"
+#     "--mango_mat_scale_rms ${rms}"
+#     "--mango_mat_precond_power 0.5"
+#     # some unrelated configs for convenience
+#     "--compile_only True"  # turn on to warmup the node (for the first run)
+#     "--advanced_log False"  # turn on to log rms norms
+# )
 
 # lr=0.05
 # momentum="0.85,0.95,300"

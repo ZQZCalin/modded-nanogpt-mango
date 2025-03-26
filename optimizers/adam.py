@@ -54,7 +54,7 @@ class AdamW(torch.optim.Optimizer):
                     precond.lerp_(g**2, 1 - group["b2"])
                     count: int = state["count"]
                     count += 1
-                    g = (buf/(1-state["b1"])**count) / ((precond/(1-state["b2"]**count)).sqrt() + state["eps"])
+                    g = (buf/(1-group["b1"])**count) / ((precond/(1-group["b2"]**count)).sqrt() + group["eps"])
                 else:
                     g = update_buffer_views[self.rank]
                 if base_i > 0:
