@@ -55,8 +55,10 @@ def error_feedback(G: Tensor, tau: float) -> Tensor:
     if G.size(-2) > G.size(-1):
         X = X.mT
     U, S, Vh = torch.linalg.svd(X, full_matrices=False)
-    S = S / (S.max(dim=-1, keepdim=True).values + 1e-7)
-    S = torch.clip(S - tau, min = 0.0)
+    # S = S / (S.max(dim=-1, keepdim=True).values + 1e-7)
+    # S = torch.clip(S - tau, min = 0.0)
+    spectral_norm = S.max(dim=-1, keepdim=True).values + 1e-7
+    S = torch.clip(S/spectral_norm-tau, min=0.0) * spectral_norm 
     X = U @ torch.diag_embed(S) @ Vh
     if G.size(-2) > G.size(-1):
         X = X.mT

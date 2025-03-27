@@ -486,9 +486,9 @@ head_params = [model.lm_head.weight]
 # init the optimizer(s)
 adam_params = [dict(params=head_params, lr=0.22), dict(params=embed_params, lr=0.6), dict(params=scalar_params, lr=0.04)]
 optimizer_adams = [AdamW(d["params"], lr=d["lr"], b1=0.8, b2=0.95, eps=1e-8, rank=rank, world_size=world_size) for d in adam_params]
-optimizer_mango = MuonErr(hidden_matrix_params, lr=cmd_args.lr, error_feedback=cmd_args.error_feedback,
+optimizer_hidden = MuonErr(hidden_matrix_params, lr=cmd_args.lr, error_feedback=cmd_args.error_feedback,
                           nesterov=cmd_args.nesterov, rank=rank, world_size=world_size)
-optimizers = [*optimizer_adams, optimizer_mango]
+optimizers = [*optimizer_adams, optimizer_hidden]
 
 for opt in optimizers:
     for group in opt.param_groups:
@@ -633,7 +633,7 @@ for step in range(train_steps + 1):
         for group in opt.param_groups:
             group["lr"] = group["initial_lr"] * get_lr(step)
     # if necessary, we can also use some warmup on error_feedback constant
-    for group in optimizer_mango.param_groups:
+    for group in optimizer_hidden.param_groups:
         break
         group["error_feedback"] = linear_warmup(step, *cmd_args.mango_mat_beta1)
     # step the optimizers
