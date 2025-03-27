@@ -40,8 +40,11 @@ EOF
 # -----------------------------------------------------------------------------
 # Batch submitting
 
-error_feedbacks=(0.0 0.01 0.05 0.1 1.0)
-lrs=(0.05 0.04 0.0625)
+# error_feedbacks=(0.0 0.01 0.05 0.1 1.0)
+# lrs=(0.05 0.04 0.0625)
+error_feedbacks=(0.05 0.0 1.0)
+lrs=(1e-4 1e-3 1e-2 0.1 1 10)
+nesterov=True
 
 for err in "${error_feedbacks[@]}"; do
     for lr in "${lrs[@]}"; do
@@ -56,6 +59,7 @@ for err in "${error_feedbacks[@]}"; do
             "--optimizer muon_err"
             "--lr ${lr}"
             "--error_feedback ${err}"
+            "--nesterov ${nesterov}"
         )
         submit_job ${args[@]}
     done
