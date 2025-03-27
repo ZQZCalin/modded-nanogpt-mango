@@ -28,8 +28,12 @@ import argparse
 import ast
 import wandb
 from dataclasses import asdict
-# move optimizers to a different folder for convenient configurations
-from optimizers import Muon, Mango, SFMuon
+
+import pathlib
+parent_path = str(pathlib.Path(__file__).parents[1].parent)
+sys.path.append(parent_path)
+print(f"adding {parent_path} to system path...")
+from optimizers import Muon
 
 # -----------------------------------------------------------------------------
 # Additional argparser to interface with cmd and parallel submit
@@ -53,7 +57,6 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Additional cmd args.")
     # basics
     parser.add_argument("--random_seed", type=int, default=42, help="Fix a random seed")
-    parser.add_argument("--optimizer", type=str, default="muon", help="Optimizer name")
     # logging
     parser.add_argument("--log_folder", type=str, default="", help="Log subfolder name")
     parser.add_argument("--run_name", type=str, default="", help="Name your run")
