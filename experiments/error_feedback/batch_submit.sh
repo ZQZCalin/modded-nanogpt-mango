@@ -1,45 +1,15 @@
 #!/bin/bash
 
-# -----------------------------------------------------------------------------
-# Experiment configs
-
 script="experiments/error_feedback/train.py"
 
-lr=0.05
-err=0.05
-
-name=muon_err
-
-DATE=$(date +"%Y-%m-%d")
-args=(
-    # basic configs
-    "--run_name ${name}_lr${lr}_ef${err}"
-    "--wandb_project nanogpt_speedrun"
-    "--log_folder mango_${DATE}"
-    "--random_seed 42"
-    # some unrelated configs for convenience
-    "--compile_only False"  # turn on to warmup the node (for the first run)
-    "--advanced_log False"  # turn on to log rms norms
-    # optimizer configs
-    "--optimizer muon_err"
-    "--lr ${lr}"
-    "--error_feedback ${err}"
-)
-
 # -----------------------------------------------------------------------------
-# Redirect SCC outputs.
+# Configs.
+GPU=L40S
+NODES=1
 BASE_DIR=/projectnb/aclab/qinziz/nanogpt-mango      # change your base path here
 DATE=$(date +"%Y-%m-%d")
 OUTPUT_PATH=$BASE_DIR/scc_outputs/$DATE
 mkdir -p $OUTPUT_PATH
-
-# -----------------------------------------------------------------------------
-# Submit job to SCC.
-GPU=L40S
-NODES=1
-mode=0
-mode=1      # uncomment to run locally instead of submit to scc
-# mode=2      # uncomment to run batch submits
 
 submit_job() {
     local args=("$@")
@@ -55,6 +25,7 @@ submit_job() {
 #$ -o $OUTPUT_PATH/\$JOB_NAME.o\$JOB_ID
 #$ -e $OUTPUT_PATH/\$JOB_NAME.e\$JOB_ID
 
+cd ${BASE_DIR}
 source activate_env.sh
 torchrun --standalone --nproc_per_node=${NODES} ${script} ${args[@]}
 EOF
@@ -66,8 +37,26 @@ EOF
     echo "Submitted job: $name"
 }
 
-if [[ $mode -eq 1 ]]; then
-    torchrun --standalone --nproc_per_node=${NODES} ${script} ${args[@]}
-elif [[ $mode -eq 0 ]]; then
-    submit_job ${args[@]}
-fi
+# -----------------------------------------------------------------------------
+# Batch submitting
+
+error_feedbacks=(0.0 0.01 0.05 0.1 1.0)
+lrs=(0.05 0.04 0.0625)
+
+for err in "${error_feedbacks[@]}"; do
+    for lr in "${lrs[@]}"; do
+        name="muon-err_lr${lr}_ef${err}"
+        args=(
+            # basic configs
+            "--run_name ${name}"
+            "--wandb_project nanogpt_speedrun"
+            "--log_folder muon_err_${DATE}"
+            "--random_seed 42"
+            # optimizer configs
+            "--optimizer muon_err"
+            "--lr ${lr}"
+            "--error_feedback ${err}"
+        )
+        submit_job ${args[@]}
+    done
+done

@@ -32,7 +32,7 @@ import pathlib
 parent_path = str(pathlib.Path(__file__).parents[1].parent)
 sys.path.append(parent_path)
 print(f"adding {parent_path} to system path...")
-from optimizers import Mango, AdamW
+from optimizers import MuonErr, AdamW
 
 # -----------------------------------------------------------------------------
 # Additional argparser to interface with cmd and parallel submit
@@ -47,11 +47,6 @@ def str2bool(v):
     else:
         raise argparse.ArgumentTypeError("Boolean value expected.")
 
-def str2tuple(v):
-    assert isinstance(v, str)
-    res = [ast.literal_eval(e.strip()) for e in v.split(",")]
-    return tuple(res)
-
 def parse_args():
     parser = argparse.ArgumentParser(description="Additional cmd args.")
     # basics
@@ -64,30 +59,13 @@ def parse_args():
     parser.add_argument("--compile_only", type=str2bool, default=False, help="Turn on to break after compiling.")
     parser.add_argument("--advanced_log", type=str2bool, default=False, help="Turn on to log advanced info")
     # optimizer configs
-    parser.add_argument("--optimizer", type=str, default="muon")
-    parser.add_argument("--mango_mat_lr", type=float, default=0.05, help="Mango-mat learning rate")
-    parser.add_argument("--mango_mat_beta1", type=str2tuple, default="0.85,0.95,300", help="Mango-mat beta1")
-    parser.add_argument("--mango_mat_beta2", type=str2tuple, default="0,0,300", help="Mango-mat beta2")
-    parser.add_argument("--mango_mat_nesterov", type=str2bool, default=True, help="Mango-mat nesterov momentum")
-    parser.add_argument("--mango_mat_backend", type=str, default="newtonschulz5", help="Mango_mat normalize backend")
-    parser.add_argument("--mango_mat_backend_args", type=str, default="steps=5,scale_dim=True", help="Mango_mat backend extra args")
-    parser.add_argument("--mango_mat_scale_rms", type=str2bool, default=False, help="Mango_mat normalize update by rms norm")
-    parser.add_argument("--mango_mat_grafting", type=str2bool, default=False, help="Mango_mat use grafting")
-    parser.add_argument("--mango_mat_eps", type=float, default=1e-8, help="Mango_mat eps")
-    parser.add_argument("--mango_mat_use_cond", type=str2bool, default=False, help="Mango_mat turn on conditioning")
-    parser.add_argument("--mango_mat_laprop", type=str2bool, default=False, help="Mango_mat use laprop pre-conditioning")
-    parser.add_argument("--mango_mat_precond_power", type=float, default=0.0, help="Mango_mat preconditioning power")
-    parser.add_argument("--mango_mat_postcond_power", type=float, default=0.0, help="Mango_mat postconditioning power")
+    parser.add_argument("--optimizer", type=str, default="muon_err")
+    parser.add_argument("--lr", type=float, default=0.05, help="learning rate")
+    parser.add_argument("--error_feedback", type=float, default=0.05, help="error feedback constant")
+    parser.add_argument("--nesterov", type=str2bool, default=True, help="use nesterov")
     return parser.parse_args()
 
 cmd_args = parse_args()
-
-def parse_backend_args(args: str) -> dict:
-    res = {}
-    for arg in args.split(","):
-        k, v = arg.strip().split("=")
-        res[k] = ast.literal_eval(v)
-    return res
 
 # -----------------------------------------------------------------------------
 # Reproducibility: Set the random seed (adjust base_seed as desired)
@@ -508,20 +486,8 @@ head_params = [model.lm_head.weight]
 # init the optimizer(s)
 adam_params = [dict(params=head_params, lr=0.22), dict(params=embed_params, lr=0.6), dict(params=scalar_params, lr=0.04)]
 optimizer_adams = [AdamW(d["params"], lr=d["lr"], b1=0.8, b2=0.95, eps=1e-8, rank=rank, world_size=world_size) for d in adam_params]
-optimizer_mango = Mango(hidden_matrix_params, 
-                    lr=cmd_args.mango_mat_lr, 
-                    beta1=cmd_args.mango_mat_beta1[1],   # change to tuple 
-                    beta2=cmd_args.mango_mat_beta2[1], 
-                    nesterov=cmd_args.mango_mat_nesterov,
-                    backend=cmd_args.mango_mat_backend,
-                    scale_rms=cmd_args.mango_mat_scale_rms, 
-                    grafting=cmd_args.mango_mat_grafting,
-                    eps=cmd_args.mango_mat_eps, 
-                    use_cond=cmd_args.mango_mat_use_cond,
-                    laprop=cmd_args.mango_mat_laprop,
-                    precond_power=cmd_args.mango_mat_precond_power, 
-                    postcond_power=cmd_args.mango_mat_postcond_power,
-                    **parse_backend_args(cmd_args.mango_mat_backend_args))
+optimizer_mango = MuonErr(hidden_matrix_params, lr=cmd_args.lr, error_feedback=cmd_args.error_feedback,
+                          nesterov=cmd_args.nesterov, rank=rank, world_size=world_size)
 optimizers = [*optimizer_adams, optimizer_mango]
 
 for opt in optimizers:
@@ -596,7 +562,7 @@ if master_process:
 #        Training and validation       #
 ########################################
 
-def warmup_momentum(step, start, end, warmup):
+def linear_warmup(step, start, end, warmup):
     frac = min(step / warmup, 1)
     return (1 - frac) * start + frac * end
 
@@ -666,10 +632,10 @@ for step in range(train_steps + 1):
     for opt in optimizers:
         for group in opt.param_groups:
             group["lr"] = group["initial_lr"] * get_lr(step)
-    # momentum warmup
+    # if necessary, we can also use some warmup on error_feedback constant
     for group in optimizer_mango.param_groups:
-        group["beta1"] = warmup_momentum(step, *cmd_args.mango_mat_beta1)
-        group["beta2"] = warmup_momentum(step, *cmd_args.mango_mat_beta2)
+        break
+        group["error_feedback"] = linear_warmup(step, *cmd_args.mango_mat_beta1)
     # step the optimizers
     for opt in optimizers:
         opt.step()
