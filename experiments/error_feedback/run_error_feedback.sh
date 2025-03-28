@@ -6,9 +6,13 @@
 script="experiments/error_feedback/train_error_feedback.py"
 
 lr=0.05
-err="0.15,0.05,300"
+err="0.05,0.05,300"
+decay=False
+mom="0.85,0.95,300"
+nes=True
+nesmom="0.85,0.95,300"
 
-name="muon-err-v3_lr${lr}_ef${err}"
+name="muon-err-v4_lr${lr}_ef${err}"
 
 DATE=$(date +"%Y-%m-%d")
 args=(
@@ -24,7 +28,10 @@ args=(
     "--optimizer muon_err"
     "--lr ${lr}"
     "--error_feedback ${err}"
-    "--nesterov True"
+    "--decay ${decay}"
+    "--momentum ${mom}"
+    "--nesterov ${nes}"
+    "--nesterov_momentum ${nesmom}"
 )
 
 # -----------------------------------------------------------------------------

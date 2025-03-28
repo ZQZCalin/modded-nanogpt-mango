@@ -71,10 +71,12 @@ class MuonErr(torch.optim.Optimizer):
     Args:
         error_feedback: 1.0 recovers no momentum; 0.0 means no exponential downscaling on momentum term.
     """
-    def __init__(self, params, lr=0.02, error_feedback=0.05, nesterov=True, ns_steps=5, rank=0, world_size=1):
+    def __init__(self, params, lr=0.02, error_feedback=0.05, decay=True, momentum=0.95,
+                 nesterov=True, nesterov_momentum=0.95, ns_steps=5, rank=0, world_size=1):
         self.rank = rank
         self.world_size = world_size
-        defaults = dict(lr=lr, error_feedback=error_feedback, nesterov=nesterov, ns_steps=ns_steps)
+        defaults = dict(lr=lr, error_feedback=error_feedback, decay=decay, momentum=momentum, 
+                        nesterov=nesterov, nesterov_momentum=nesterov_momentum, ns_steps=ns_steps)
         params: list[Tensor] = [*params]
         param_groups = []
         for size in {p.numel() for p in params}:
@@ -107,10 +109,19 @@ class MuonErr(torch.optim.Optimizer):
                     if "momentum_buffer" not in state:
                         state["momentum_buffer"] = torch.zeros_like(g)
                     # replace momentum update with error-feedback update
+                    # >> V1 updates:
+                    # buf: Tensor = state["momentum_buffer"]
+                    # buf = error_feedback(buf, tau=group["error_feedback"]).add(g)
+                    # state["momentum_buffer"] = buf
+                    # g = g.add_(error_feedback(buf, tau=group["error_feedback"])) if group["nesterov"] else buf
+                    # >> V4 updates:
+                    # incorporate momentum decay, disable error feedback for nesterov update
                     buf: Tensor = state["momentum_buffer"]
-                    buf = error_feedback(buf, tau=group["error_feedback"]).add(g)
+                    buf = error_feedback(buf, tau=group["error_feedback"])
+                    buf = buf.lerp_(g, 1 - group["momentum"]) if group["decay"] else buf.add_(g)
                     state["momentum_buffer"] = buf
-                    g = g.add_(error_feedback(buf, tau=group["error_feedback"])) if group["nesterov"] else buf
+                    g = g.lerp_(buf, group["nesterov_momentum"]) if group["nesterov"] else buf
+                    # >> Muon updates:
                     # buf.lerp_(g, 1 - group["momentum"])
                     # g = g.lerp_(buf, group["momentum"]) if group["nesterov"] else buf
                     g = zeropower_via_newtonschulz5(g, steps=group["ns_steps"]).flatten()
