@@ -40,15 +40,13 @@ EOF
 # -----------------------------------------------------------------------------
 # Batch submitting
 
-# error_feedbacks=(0.0 0.01 0.05 0.1 1.0)
-# lrs=(0.05 0.04 0.0625)
-error_feedbacks=(0.05 0.0 1.0)
-lrs=(1e-4 1e-3 1e-2 0.1 1 10)
+error_feedbacks=(0.0 0.01 0.05 0.1 1.0)
+lrs=(0.05 5e-3 0.5)
 nesterov=True
 
-for err in "${error_feedbacks[@]}"; do
-    for lr in "${lrs[@]}"; do
-        name="muon-err_lr${lr}_ef${err}"
+for lr in "${lrs[@]}"; do
+    for err in "${error_feedbacks[@]}"; do
+        name="muon-err-v2_lr${lr}_ef${err}"
         args=(
             # basic configs
             "--run_name ${name}"
