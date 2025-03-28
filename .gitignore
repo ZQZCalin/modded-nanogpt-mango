@@ -8,5 +8,6 @@ env/
 scc_outputs/
 wandb/
 test.*
+batch_submit.sh
 # scc_setup.sh
 # activate_env.sh
