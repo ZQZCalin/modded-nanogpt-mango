@@ -3,7 +3,7 @@
 # -----------------------------------------------------------------------------
 # Experiment configs
 
-script="experiments/error_feedback/train.py"
+script="experiments/error_feedback/train_error_feedback.py"
 
 lr=0.05
 err=0.05
