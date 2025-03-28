@@ -47,6 +47,11 @@ def str2bool(v):
     else:
         raise argparse.ArgumentTypeError("Boolean value expected.")
 
+def str2tuple(v):
+    assert isinstance(v, str)
+    res = [ast.literal_eval(e.strip()) for e in v.split(",")]
+    return tuple(res)
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Additional cmd args.")
     # basics
@@ -61,7 +66,7 @@ def parse_args():
     # optimizer configs
     parser.add_argument("--optimizer", type=str, default="muon_err")
     parser.add_argument("--lr", type=float, default=0.05, help="learning rate")
-    parser.add_argument("--error_feedback", type=float, default=0.05, help="error feedback constant")
+    parser.add_argument("--error_feedback", type=str2tuple, default="0.05,0.05,300", help="error feedback constant")
     parser.add_argument("--nesterov", type=str2bool, default=True, help="use nesterov")
     return parser.parse_args()
 
@@ -486,7 +491,7 @@ head_params = [model.lm_head.weight]
 # init the optimizer(s)
 adam_params = [dict(params=head_params, lr=0.22), dict(params=embed_params, lr=0.6), dict(params=scalar_params, lr=0.04)]
 optimizer_adams = [AdamW(d["params"], lr=d["lr"], b1=0.8, b2=0.95, eps=1e-8, rank=rank, world_size=world_size) for d in adam_params]
-optimizer_hidden = MuonErr(hidden_matrix_params, lr=cmd_args.lr, error_feedback=cmd_args.error_feedback,
+optimizer_hidden = MuonErr(hidden_matrix_params, lr=cmd_args.lr, error_feedback=cmd_args.error_feedback[1],
                           nesterov=cmd_args.nesterov, rank=rank, world_size=world_size)
 optimizers = [*optimizer_adams, optimizer_hidden]
 
@@ -634,8 +639,7 @@ for step in range(train_steps + 1):
             group["lr"] = group["initial_lr"] * get_lr(step)
     # if necessary, we can also use some warmup on error_feedback constant
     for group in optimizer_hidden.param_groups:
-        break
-        group["error_feedback"] = linear_warmup(step, *cmd_args.mango_mat_beta1)
+        group["error_feedback"] = linear_warmup(step, *cmd_args.error_feedback)
     # step the optimizers
     for opt in optimizers:
         opt.step()

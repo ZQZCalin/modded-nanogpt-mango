@@ -6,16 +6,16 @@
 script="experiments/error_feedback/train_error_feedback.py"
 
 lr=0.05
-err=0.05
+err="0.15,0.05,300"
 
-name=muon_err
+name="muon-err-v3_lr${lr}_ef${err}"
 
 DATE=$(date +"%Y-%m-%d")
 args=(
     # basic configs
-    "--run_name ${name}_lr${lr}_ef${err}"
+    "--run_name ${name}"
     "--wandb_project nanogpt_speedrun"
-    "--log_folder mango_${DATE}"
+    "--log_folder muon_err_${DATE}"
     "--random_seed 42"
     # some unrelated configs for convenience
     "--compile_only False"  # turn on to warmup the node (for the first run)
@@ -24,6 +24,7 @@ args=(
     "--optimizer muon_err"
     "--lr ${lr}"
     "--error_feedback ${err}"
+    "--nesterov True"
 )
 
 # -----------------------------------------------------------------------------
