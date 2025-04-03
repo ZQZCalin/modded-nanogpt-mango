@@ -7,6 +7,7 @@ logs/
 env/
 scc_outputs/
 wandb/
+checkpoints/
 test.*
 batch_submit.sh
 # scc_setup.sh
