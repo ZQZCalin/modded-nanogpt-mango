@@ -113,7 +113,7 @@ def val(model, step, args):
     for name, param in model.named_parameters():
         mean[name] = torch.zeros_like(param)
         if param.ndim <= 1:
-            covariance[name] = torch.zeros_like(param)
+            covariance[name] = torch.eye(param.size(0))
         elif param.ndim == 2:
             r, c = param.size()
             covariance[f"{name}-L"] = torch.eye(r)
@@ -147,7 +147,6 @@ def val(model, step, args):
         model.zero_grad(set_to_none=True)
         inputs, targets = next(val_loader)
         loss = model(inputs, targets, get_window_size_blocks(step, args)) / val_steps
-        val_loss += loss.detach()
         # Update mean and covariance
         loss.backward()
         for name, param in model.named_parameters():
