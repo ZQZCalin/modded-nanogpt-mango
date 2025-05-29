@@ -9,7 +9,7 @@ import uuid
 import time
 import copy
 import glob
-from dataclasses import dataclass, as_dict
+from dataclasses import dataclass, asdict
 from functools import lru_cache
 from pathlib import Path
 
@@ -444,8 +444,45 @@ def distributed_data_generator(filename_pattern: str, batch_size: int, rank : in
         yield inputs, targets
 
 # -----------------------------------------------------------------------------
-# A simple training pipeline
+# Helper functions
 
+def init_trapezoid_schedule(total_steps: int, warmup_lr: float, cooldown_lr: float, warmup_frac: float, cooldown_frac: float):
+    def schedule(step):
+        x = step / total_steps
+        assert 0 <= x < 1
+        if x < warmup_frac:
+            w = x / warmup_frac
+            return w * 1.0 + (1-w) * warmup_lr
+        elif x < 1 - cooldown_frac:
+            return 1.0
+        else:
+            w = (1-x) / cooldown_frac
+            return w * 1.0 + (1-w) * cooldown_lr
+    return schedule
+
+def init_piecewise_linear_schedule(start_lr: float, end_lr: float, start_step: int, end_step: int):
+    def schedule(step):
+        if step <= start_step:
+            return start_lr
+        elif step >= end_step:
+            return end_lr
+        else:
+            w = (step - start_step) / (end_step - start_step)
+            return w * end_lr + (1-w) * start_lr
+    return schedule
+
+def init_schedule(args):
+    if args.schedule == "trapezoid":
+        return init_trapezoid_schedule(
+            args.total_steps, args.trapezoid_warmup_lr, args.trapezoid_cooldown_lr,
+            args.warmup_frac, args.cooldown_frac
+        )
+    if args.schedule == "piecewise_linear":
+        return init_piecewise_linear_schedule(
+            args.piecewise_linear_start_lr, args.piecewise_linear_end_lr,
+            args.piecewise_linear_start_step, args.piecewise_linear_end_step
+        )
+    raise ValueError(f"Schedule '{args.schedule}' is not implemented.")
 
 # -----------------------------------------------------------------------------
 # init main
@@ -461,26 +498,9 @@ def str2bool(arg):
     else:
         raise argparse.ArgumentTypeError("Boolean value expected.")
 
-@dataclass
-class Hyperparameters:
-    # data
-    data_dir: str = "data"
-    train_files = "fineweb10B/fineweb_train_*.bin" # input .bin to train on
-    val_files = "fineweb10B/fineweb_val_*.bin" # input .bin to eval validation loss on
-    val_tokens = 10485760 # how many tokens of validation data? it's important to keep this fixed for consistent comparisons
-    train_seq_len = 48*1024 # FlexAttention sequence length
-    val_seq_len = 4*64*1024 # FlexAttention sequence length for validation
-    # optimization
-    num_iterations = 1770 # number of iterations to run
-    cooldown_frac = 0.4 # fraction of training spent cooling down the learning rate
-    # architecture
-    vocab_size = 50257
-    # evaluation and logging
-    val_loss_every = 125 # every how many steps to evaluate val loss? 0 for only at the end
-    save_checkpoint = False
-
 def parse_args():
     parser = argparse.ArgumentParser(description="Args for experiment setup.")
+    runid = str(uuid.uuid4())
     # dataset
     parser.add_argument("--dataset.data_dir", dest="data_dir", type=str,
                         default="data",
@@ -513,39 +533,65 @@ def parse_args():
                         help="Training: total steps for the entire experiment.")
     parser.add_argument("--train.local_steps", dest="local_steps", type=int,
                         help="Training: stops after local_steps if specified.")
+    parser.add_argument("--train.val_loss_every", dest="val_loss_every", type=int,
+                        default=125,
+                        help="Training: every how many steps to evaluate val loss?")
+    parser.add_argument("--train.val_at_steps", dest="val_at_steps", nargs="+", type=int,
+                        help="Training: list of steps at which val loss is evaluated. Overwrites val_loss_every if specified.")
     # loggings
     parser.add_argument("--logging.wandb_project", dest="wandb_project", type=str,
                         help="Logging: wandb project name.")
     parser.add_argument("--logging.wandb_name", dest="wandb_name", type=str,
                         help="Logging: wandb experiment run name.")
     parser.add_argument("--logging.wandb_runid", dest="wandb_runid", type=str,
+                        default=runid,
                         help="Logging: wandb experiment run id.")
+    parser.add_argument("--logging.local_log_file", dest="local_log_file", type=str,
+                        default=f"run_{runid}.txt",
+                        help="Logging: local file for loggings on the master node.")
     # optimizer
+    # NOTE: for now, we disable initializing optimizer from cmd args, and only use a fixed muon optimizer.
     parser.add_argument("--optimizer", dest="optimizer", type=str,
                         help="Optimizer: optimizer name.")
+        # >> muon
     parser.add_argument("--optimizer.muon.momentum", dest="muon_momentum", type=float,
                         help="Muon: momentum buffer constant.")
     parser.add_argument("--optimizer.muon.nesterov", dest="muon_nesterov", type=str2bool,
                         help="Muon: uses nesterov momentum if true.")
     # schedule
     parser.add_argument("--schedule", dest="schedule", type=str,
+                        default="trapezoid",
                         help="Schedule: learning rate schedule name.")
-    parser.add_argument("--schedule.piecewise_linear.lr1", dest="piecewise_linear_lr1", type=float,
-                        help="Piecewise linear schedule: lr1.")
-    parser.add_argument("--schedule.piecewise_linear.lr2", dest="piecewise_linear_lr2", type=float,
-                        help="Piecewise linear schedule: lr2.")
+        # >> trapezoid
+    parser.add_argument("--schedule.trapezoid.warmup_lr", dest="trapezoid_warmup_lr", type=float,
+                        default=1,
+                        help="Trapezoid schedule: lr scalar at the start of warmup.")
+    parser.add_argument("--schedule.trapezoid.cooldown_lr", dest="trapezoid_cooldown_lr", type=float,
+                        default=0.1,
+                        help="Trapezoid schedule: lr scalar at the end of cooldown.")
+    parser.add_argument("--schedule.trapezoid.warmup_frac", dest="trapezoid_warmup_frac", type=float,
+                        default=0,
+                        help="Trapezoid schedule: fraction of steps for linear warmup.")
+    parser.add_argument("--schedule.trapezoid.cooldown_frac", dest="trapezoid_cooldown_frac", type=float,
+                        default=0.4,
+                        help="Trapezoid schedule: fraction of steps for linear decay (cooldown).")
+        # >> piecewise linear
+    parser.add_argument("--schedule.piecewise_linear.start_lr", dest="piecewise_linear_start_lr", type=float,
+                        help="Piecewise linear schedule: lr at the start.")
+    parser.add_argument("--schedule.piecewise_linear.end_lr", dest="piecewise_linear_end_lr", type=float,
+                        help="Piecewise linear schedule: lr at the end.")
     parser.add_argument("--schedule.piecewise_linear.start_step", dest="piecewise_linear_start_step", type=int,
                         help="Piecewise linear schedule: step at which schedule starts to decay (exclusive).")
     parser.add_argument("--schedule.piecewise_linear.end_step", dest="piecewise_linear_end_step", type=int,
                         help="Piecewise linear schedule: step at which schedule stops decaying (inclusive).")
     # checkpoint
-    parser.add_argument("--checkpoint.save", dest="save", type=str2bool,
+    parser.add_argument("--checkpoint.save", dest="save", type=str2bool, default=False,
                         help="Checkpoint: whether to save checkpoint.")
     parser.add_argument("--checkpoint.save_path", dest="save_path", type=str,
                         help="Checkpoint: directory in which checkpoints are saved.")
-    parser.add_argument("--checkpoint.save_steps", dest="save_steps", nargs="+", type=int,
-                        help="Checkpoint: steps in which checkpoints are saved.")
-    parser.add_argument("--checkpoint.load", dest="load", type=str2bool,
+    parser.add_argument("--checkpoint.save_at_steps", dest="save_at_steps", nargs="+", type=int,
+                        help="Checkpoint: steps at which checkpoints are saved.")
+    parser.add_argument("--checkpoint.load", dest="load", type=str2bool, default=False,
                         help="Checkpoint: whether to load checkpoint.")
     parser.add_argument("--checkpoint.load_path", dest="load_path", type=str,
                         help="Checkpoint: directory in which checkpoints are loaded.")
@@ -556,22 +602,9 @@ def parse_args():
                         help="System: turn on to break after compiling.")
     return parser.parse_args()
 
-def init_config():
-    args = parse_args()
-    config = Hyperparameters(
-        # If you have downloaded the data, you can specify the path here.
-        # This loads data from your download path instead of downloading again.
-        data_dir="/projectnb/aclab/datasets",
-    )
-
 def main():
     args = parse_args()
-        
-    config = Hyperparameters(
-        # If you have downloaded the data, you can specify the path here.
-        # This loads data from your download path instead of downloading again.
-        data_dir="/projectnb/aclab/datasets",
-    )
+    args.data_dir = "/projectnb/aclab/datasets"     # we already downloaded data in our lab's common directory.
 
     # torchrun sets these env variables
     rank = int(os.environ["RANK"])
@@ -595,30 +628,20 @@ def main():
     torch.cuda.manual_seed_all(seed)
 
     ########################################
-    #    Log file and initialize wandb     #
+    #          Log to local files          #
     ########################################
-
-    logfile = None
-    if master_process:
-        run_id = str(uuid.uuid4())
-        run_name = f"{args.run_name}_{run_id[:4]}"
-        log_dir = f"logs/{args.log_folder}"
-        os.makedirs(log_dir, exist_ok=True)
-        logfile = os.path.join(log_dir, f"{run_name}.txt")
-        print(logfile)
 
     def print0(s, console=False):
         if master_process:
-            with open(logfile, "a") as f:
+            with open(args.local_log_file, "a") as f:
                 if console:
                     print(s)
                 print(s, file=f)
 
     # additionally print the cmd_args
-    print0(vars(args))
-    print0("="*100)
-    # begin by printing this file (the Python code)
-    print0(code)
+    print0("Experiment configs:")
+    for k, v in vars(args):
+        print0(f"{k:<20}: {v}")
     print0("="*100)
     # log information about the hardware/software environment this is running on
     print0(f"Running Python {sys.version}")
@@ -633,8 +656,10 @@ def main():
     #    Construct model and optimizer     #
     ########################################
 
-    model: nn.Module = GPT(vocab_size=config.vocab_size, num_layers=12, num_heads=6, model_dim=768,
-                        max_seq_len=max(config.train_seq_len, config.val_seq_len)).cuda()
+    # TODO: add model saving and loading besides random initialization
+
+    model: nn.Module = GPT(vocab_size=args.vocab_size, num_layers=12, num_heads=6, model_dim=768,
+                        max_seq_len=max(args.train_seq_len, args.val_seq_len)).cuda()
     for m in model.modules():
         if isinstance(m, nn.Embedding):
             m.bfloat16()
@@ -652,28 +677,31 @@ def main():
     # small adam epsilon by @YouJiacheng. this is an alternate method of fixing the world_size dependence
     # discovered by @fernbear.bsky.social https://x.com/hi_tysam/status/1879692937589875094
     optimizer1 = torch.optim.Adam(adam_params, betas=(0.8, 0.95), eps=1e-10, fused=True)
-    optimizer2 = Muon(hidden_matrix_params, lr=args.lr, momentum=args.momentum[1], rank=rank, world_size=world_size)
+    optimizer2 = Muon(hidden_matrix_params, lr=0.05, momentum=0.95, rank=rank, world_size=world_size)
     optimizers = [optimizer1, optimizer2]
     for opt in optimizers:
         for group in opt.param_groups:
             group["initial_lr"] = group["lr"]
 
+    # TODO: separate learning rate initialization to a different component
+    # The schedule is just an additional scalar that will be applied to group["initial_lr"]
+
     # learning rate schedule: stable then decay
-    def get_lr(step: int):
-        x = step / config.num_iterations # progress in training
+    def get_lr(step: int, args): # this should be moved to trapezoid lr
+        x = step / args.num_iterations # progress in training
         assert 0 <= x < 1
-        if x < 1 - config.cooldown_frac:
+        if x < 1 - args.cooldown_frac:
             return 1.0
         else:
-            w = (1 - x) / config.cooldown_frac
-            return w * 1.0 + (1 - w) * 0.1
+            w = (1 - x) / args.cooldown_frac
+            return w * 1.0 + (1 - w) * 0.1  # NOTE: the default schedule decays to 0.1 instead of 0
 
     # attention window size schedule: linearly increase
     @lru_cache(1)
     def get_window_size_blocks_helper(window_size: int):
         return torch.tensor(window_size // 128, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
     def get_window_size_blocks(step: int):
-        x = step / config.num_iterations # progress in training
+        x = step / args.total_steps # progress in training
         assert 0 <= x <= 1
         # Linearly increase the block-wise sliding window size over training 128 -> 1792
         # increase by @fernbear.bsky.social; block-wise by @YouJiacheng
@@ -691,7 +719,7 @@ def main():
     initial_state = dict(model=copy.deepcopy(model.state_dict()),
                         optimizers=[copy.deepcopy(opt.state_dict()) for opt in optimizers]) # save the initial state
     for _ in range(warmup_steps):
-        inputs = targets = torch.randint(0, config.vocab_size, size=(config.train_seq_len,), device="cuda")
+        inputs = targets = torch.randint(0, args.vocab_size, size=(args.train_seq_len,), device="cuda")
         model(inputs.to(torch.int32), targets, get_window_size_blocks(0)).backward()
         for param in model.parameters():
             dist.all_reduce(param.grad, op=dist.ReduceOp.AVG)
@@ -708,55 +736,51 @@ def main():
         raise KeyboardInterrupt
 
     ########################################
-    #           Logging to WandB           #
+    #             Log to WandB             #
     ########################################
 
     if master_process:
-        wandb.init(
-            project=args.wandb_project, 
-            name=run_name,
-            id=run_id,
-            resume="never",
-        )
-        wandb.config.update(
-            {**asdict(config), **vars(args)}
-        )
+        wandb.init(project=args.wandb_project, name=args.wandb_name, 
+                   id=args.wandb_runid, resume="never")
+        wandb.config.update(vars(args))
 
     ########################################
     #        Training and validation       #
     ########################################
 
+    # TODO: fix data loading sequence and fetch corresponded data in each segment.
+
     def linear_warmup(step, start, end, warmup_steps):
         frac = min(step / warmup_steps, 1)
         return (1 - frac) * start + frac * end
 
-    # Simulate parallel training on a singl GPU
+    # Simulate parallel training on a single GPU
     simulate_world_size = 8
     assert simulate_world_size % world_size == 0
     meta_batch_size = simulate_world_size // world_size
 
     train_loader = distributed_data_generator(
-        os.path.join(config.data_dir, config.train_files), world_size * config.train_seq_len, rank, world_size)
+        os.path.join(args.data_dir, args.train_files), world_size * args.train_seq_len, rank, world_size)
     training_time_ms = 0
     # start the clock
     torch.cuda.synchronize()
     t0 = time.perf_counter()
     # begin training
-    train_steps = config.num_iterations
+    train_steps = args.num_iterations
     for step in range(train_steps + 1):
         last_step = (step == train_steps)
 
         # --------------- VALIDATION SECTION -----------------
-        if last_step or (config.val_loss_every > 0 and step % config.val_loss_every == 0):
+        if last_step or (args.val_loss_every > 0 and step % args.val_loss_every == 0):
             # stop the clock
             torch.cuda.synchronize()
             training_time_ms += 1000 * (time.perf_counter() - t0)
             model.eval()
-            val_batch_size = world_size * config.val_seq_len
-            assert config.val_tokens % val_batch_size == 0
-            val_steps = config.val_tokens // val_batch_size
+            val_batch_size = world_size * args.val_seq_len
+            assert args.val_tokens % val_batch_size == 0
+            val_steps = args.val_tokens // val_batch_size
             val_loader = distributed_data_generator(
-                os.path.join(config.data_dir, config.val_files), val_batch_size, rank, world_size)
+                os.path.join(args.data_dir, args.val_files), val_batch_size, rank, world_size)
             val_loss = 0
             with torch.no_grad():
                 for _ in range(val_steps):
@@ -775,7 +799,7 @@ def main():
             t0 = time.perf_counter()
 
         if last_step:
-            if master_process and config.save_checkpoint:
+            if master_process and args.save_checkpoint:
                 log = dict(step=step, code=code, model=model.state_dict(), optimizers=[opt.state_dict() for opt in optimizers])
                 os.makedirs(f"logs/{run_id}", exist_ok=True)
                 torch.save(log, f"logs/{run_id}/state_step{step:06d}.pt")
@@ -789,7 +813,7 @@ def main():
             inputs, targets = next(train_loader)
             loss = model(inputs, targets, get_window_size_blocks(step)) / meta_batch_size
             loss.backward()
-            train_loss += loss.detach() / config.train_seq_len    # NOTE: args.train_seq_len is the local batch size per gpu
+            train_loss += loss.detach() / args.train_seq_len    # NOTE: args.train_seq_len is the local batch size per gpu
             for param in model.parameters():
                 dist.all_reduce(param.grad, op=dist.ReduceOp.AVG)
         # set optimization hyperparameters
@@ -827,6 +851,12 @@ def main():
     print0(f"peak memory allocated: {torch.cuda.max_memory_allocated() // 1024 // 1024} MiB "
         f"reserved: {torch.cuda.max_memory_reserved() // 1024 // 1024} MiB", console=True)
     dist.destroy_process_group()
+
+    ########################################
+    #            Save checkpoint           #
+    ########################################
+
+    # TODO: save checkpoint (step, model, opt_state)
 
 if __name__ == "__main__":
     main()
