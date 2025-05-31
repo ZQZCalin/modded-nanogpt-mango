@@ -17,6 +17,7 @@ import random
 import numpy as np
 import argparse
 import wandb
+from typing import List
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 import torch
@@ -484,6 +485,40 @@ def init_schedule(args):
         )
     raise ValueError(f"Schedule '{args.schedule}' is not implemented.")
 
+########################################
+#       Save and load checkpoint      #
+########################################
+
+@dataclass
+class TrainState:
+    step: int
+    model: nn.Module
+    optimizers: List[torch.optim.Optimizer]
+
+def save_checkpoint(train_state: TrainState, path: str) -> None:
+    torch.save({
+        "step": train_state.step,
+        "model_state": train_state.model.state_dict(), 
+        "opt_states": [opt.state_dict() for opt in train_state.optimizers],
+    }, path)
+    print(f"Saved checkpoint to {str} (step={train_state.step}).")
+
+def load_checkpoint(path: str, model, optimizers, map_location=None) -> int:
+    """Loads the model and optimizer states in-place, 
+    and returns the starting iteration."""
+    checkpoint = torch.load(path, map_location=map_location)
+    # Load model state.
+    model.load_state_dict(checkpoint["model_state"])
+    # Load optimizer states.
+    opt_states = checkpoint["opt_states"]
+    assert len(opt_states) == len(optimizers)
+    for (opt, state) in zip(optimizers, opt_states):
+        opt.load_state_dict(state)
+    # Load step.
+    step = checkpoint["step"]
+    print(f"Loaded checkpoint from {path} (step={step})")
+    return step
+
 # -----------------------------------------------------------------------------
 # init main
 
@@ -683,18 +718,7 @@ def main():
         for group in opt.param_groups:
             group["initial_lr"] = group["lr"]
 
-    # TODO: separate learning rate initialization to a different component
-    # The schedule is just an additional scalar that will be applied to group["initial_lr"]
-
-    # learning rate schedule: stable then decay
-    def get_lr(step: int, args): # this should be moved to trapezoid lr
-        x = step / args.num_iterations # progress in training
-        assert 0 <= x < 1
-        if x < 1 - args.cooldown_frac:
-            return 1.0
-        else:
-            w = (1 - x) / args.cooldown_frac
-            return w * 1.0 + (1 - w) * 0.1  # NOTE: the default schedule decays to 0.1 instead of 0
+    schedule = init_schedule(args)
 
     # attention window size schedule: linearly increase
     @lru_cache(1)
