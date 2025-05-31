@@ -18,6 +18,7 @@ import numpy as np
 import argparse
 import wandb
 from typing import List
+from datetime import datetime
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 import torch
@@ -501,7 +502,6 @@ def save_checkpoint(train_state: TrainState, path: str) -> None:
         "model_state": train_state.model.state_dict(), 
         "opt_states": [opt.state_dict() for opt in train_state.optimizers],
     }, path)
-    print(f"Saved checkpoint to {str} (step={train_state.step}).")
 
 def load_checkpoint(path: str, model, optimizers, map_location=None) -> int:
     """Loads the model and optimizer states in-place, 
@@ -515,9 +515,7 @@ def load_checkpoint(path: str, model, optimizers, map_location=None) -> int:
     for (opt, state) in zip(optimizers, opt_states):
         opt.load_state_dict(state)
     # Load step.
-    step = checkpoint["step"]
-    print(f"Loaded checkpoint from {path} (step={step})")
-    return step
+    return checkpoint["step"]
 
 # -----------------------------------------------------------------------------
 # init main
@@ -668,6 +666,8 @@ def main():
 
     def print0(s, console=False):
         if master_process:
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            s = f"({timestamp}): {s}"
             with open(args.local_log_file, "a") as f:
                 if console:
                     print(s)
@@ -690,8 +690,6 @@ def main():
     ########################################
     #    Construct model and optimizer     #
     ########################################
-
-    # TODO: add model saving and loading besides random initialization
 
     model: nn.Module = GPT(vocab_size=args.vocab_size, num_layers=12, num_heads=6, model_dim=768,
                         max_seq_len=max(args.train_seq_len, args.val_seq_len)).cuda()
@@ -718,8 +716,6 @@ def main():
         for group in opt.param_groups:
             group["initial_lr"] = group["lr"]
 
-    schedule = init_schedule(args)
-
     # attention window size schedule: linearly increase
     @lru_cache(1)
     def get_window_size_blocks_helper(window_size: int):
@@ -733,6 +729,21 @@ def main():
         return get_window_size_blocks_helper(window_size)
 
     model: nn.Module = torch.compile(model, dynamic=False)
+
+    ########################################
+    #            Load checkpoint           #
+    ########################################
+    start_step = 0
+    # load model and optimizers from checkpoint.
+    if args.load:
+        map_loc = {"cuda:0": f"cuda:{rank}"}    # map_location so each GPU loads onto itself
+        start_step = load_checkpoint(args.load_path, model, optimizers, map_location=map_loc)
+        print0(f"Loaded checkpoint from {args.load_path} at step={start_step}.")
+    
+    # compute the training end step.
+    end_step = args.total_steps
+    if args.local_steps is not None:
+        end_step = min(end_step, start_step + args.local_steps)
 
     ########################################
     #            Warmup kernels            #
@@ -772,7 +783,11 @@ def main():
     #        Training and validation       #
     ########################################
 
+    print0("Start training...")
+
     # TODO: fix data loading sequence and fetch corresponded data in each segment.
+    
+    schedule = init_schedule(args)
 
     def linear_warmup(step, start, end, warmup_steps):
         frac = min(step / warmup_steps, 1)
@@ -880,7 +895,10 @@ def main():
     #            Save checkpoint           #
     ########################################
 
-    # TODO: save checkpoint (step, model, opt_state)
+    if args.save and master_process:
+        train_state = TrainState(step=end_step, model=model, optimizers=optimizers)
+        save_checkpoint(train_state, args.save_path)
+        print0(f"Saved checkpoint at step={end_step}")
 
 if __name__ == "__main__":
     main()
