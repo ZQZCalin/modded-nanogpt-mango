@@ -805,12 +805,21 @@ def main():
     torch.cuda.synchronize()
     t0 = time.perf_counter()
     # begin training
-    train_steps = args.num_iterations
-    for step in range(train_steps + 1):
-        last_step = (step == train_steps)
-
+    for step in range(start_step, end_step+1):
+        is_last_step = (step == end_step)
         # --------------- VALIDATION SECTION -----------------
-        if last_step or (args.val_loss_every > 0 and step % args.val_loss_every == 0):
+        # eval at first, last, and specific steps, but not at start_step
+        if is_last_step or (step == 0):
+            val = True
+        elif step == start_step:
+            val = False
+        elif isinstance(args.val_at_steps, List[int]):
+            val = step in args.val_at_steps
+        elif args.val_loss_every > 0:
+            val = step % args.val_loss_every == 0
+        else:
+            val = False
+        if val:
             # stop the clock
             torch.cuda.synchronize()
             training_time_ms += 1000 * (time.perf_counter() - t0)
@@ -828,7 +837,7 @@ def main():
             val_loss /= val_steps
             del val_loader
             dist.all_reduce(val_loss, op=dist.ReduceOp.AVG)
-            print0(f"step:{step}/{train_steps} val_loss:{val_loss:.4f} train_time:{training_time_ms:.0f}ms step_avg:{training_time_ms/max(step, 1):.2f}ms", console=True)
+            print0(f"step:{step}/{args.total_steps} val_loss:{val_loss:.4f} train_time:{training_time_ms:.0f}ms step_avg:{training_time_ms/max(step, 1):.2f}ms", console=True)
             # add wandb_logging
             if master_process:
                 wandb.log({"val_loss": val_loss}, step=step)
@@ -837,11 +846,14 @@ def main():
             torch.cuda.synchronize()
             t0 = time.perf_counter()
 
-        if last_step:
-            if master_process and args.save_checkpoint:
-                log = dict(step=step, code=code, model=model.state_dict(), optimizers=[opt.state_dict() for opt in optimizers])
-                os.makedirs(f"logs/{run_id}", exist_ok=True)
-                torch.save(log, f"logs/{run_id}/state_step{step:06d}.pt")
+        # --------------- SAVE CHECKPOINT -----------------
+        if args.save and (step in args.save_at_steps):
+            if master_process:
+                train_state = TrainState(step=step, model=model, optimizers=optimizers)
+                save_checkpoint(train_state, args.save_path)
+                print0(f"Saved checkpoint at step={end_step}")
+
+        if is_last_step:
             # the last step only has the validation loop, so break to avoid training
             break
 
@@ -858,8 +870,8 @@ def main():
         # set optimization hyperparameters
         for opt in optimizers:
             for group in opt.param_groups:
-                group["lr"] = group["initial_lr"] * get_lr(step)
-        # warmup momentum
+                group["lr"] = group["initial_lr"] * schedule(step)
+        # warmup muon momentum
         for group in optimizer2.param_groups:
             group["momentum"] = linear_warmup(step, *args.momentum)
         # step the optimizers
@@ -867,38 +879,16 @@ def main():
             opt.step()
         # logging
         approx_training_time_ms = training_time_ms + 1000 * (time.perf_counter() - t0)
-        print0(f"step:{step+1}/{train_steps} train_loss:{train_loss} train_time:{approx_training_time_ms:.0f}ms step_avg:{approx_training_time_ms/(step + 1):.2f}ms", console=True)
+        print0(f"step:{step+1}/{args.total_steps} train_loss:{train_loss} train_time:{approx_training_time_ms:.0f}ms step_avg:{approx_training_time_ms/(step + 1):.2f}ms", console=True)
         if master_process:
             # NOTE: this train_loss is the local loss on the master node, not averaged over all nodes.
             wandb.log({"loss": train_loss}, step=step)
-            # Visualizing: 
-            if args.advanced_log:
-                opt_metrics = {}
-                id_to_name = {id(param): name for name, param in model.named_parameters()}
-                for opt in optimizers:
-                    for param, state in opt.state.items():
-                        name = id_to_name.get(id(param))
-                        param_logs = state.get("logs")
-                        if name is not None and param_logs is not None:
-                            opt_metrics.update({
-                                f"{k}/{name}": v for k, v in param_logs.items()
-                            })
-                wandb.log(opt_metrics, step=step)
         # null the gradients
         model.zero_grad(set_to_none=True)
 
     print0(f"peak memory allocated: {torch.cuda.max_memory_allocated() // 1024 // 1024} MiB "
         f"reserved: {torch.cuda.max_memory_reserved() // 1024 // 1024} MiB", console=True)
     dist.destroy_process_group()
-
-    ########################################
-    #            Save checkpoint           #
-    ########################################
-
-    if args.save and master_process:
-        train_state = TrainState(step=end_step, model=model, optimizers=optimizers)
-        save_checkpoint(train_state, args.save_path)
-        print0(f"Saved checkpoint at step={end_step}")
 
 if __name__ == "__main__":
     main()
