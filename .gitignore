@@ -2,3 +2,12 @@ fineweb10B/
 pylog124M/
 __pycache__/
 logs/
+checkpoints/
+env/
+data/
+img/
+logs/
+scc_outputs/
+wandb/
+test.*
+*.sh
